@@ -116,6 +116,7 @@ class ProMediumLevelAgent(ProAgent):
         self.think_thread = None       # 스레드 객체
         self.next_ml_action = None     # 스레드 결과 저장소
         self.lock = threading.Lock()   # 데이터 경쟁 방지용 락
+        self.prev_partner_move = None
         self.current_thought = ""
     def set_mdp(self, mdp):
         self.mdp = mdp
@@ -189,14 +190,182 @@ class ProMediumLevelAgent(ProAgent):
         layout_prompt = layout_prompt[:-1] + ".\n"
         return layout_prompt
       
+    # def generate_state_prompt(self, state):
+    #     ego = state.players[self.agent_index]
+    #     teammate = state.players[1 - self.agent_index]
+
+    #     # =========================================================
+    #     # [NEW] 1. 맵의 고정 위치 정보 (Layout Info)
+    #     # =========================================================
+    #     # self.mdp에서 위치 정보를 가져와 리스트 형태로 바로 넣습니다.
+    #     layout_info = "Layout Information: "
+    #     layout_info += f"Onion Dispensers: {self.mdp.get_onion_dispenser_locations()}; "
+    #     layout_info += f"Dish Dispensers: {self.mdp.get_dish_dispenser_locations()}; "
+        
+    #     # 토마토는 있는 맵만 표시
+    #     tomato_locs = self.mdp.get_tomato_dispenser_locations()
+    #     if tomato_locs: 
+    #         layout_info += f"Tomato Dispensers: {tomato_locs}; "
+            
+    #     layout_info += f"Serving Locations: {self.mdp.get_serving_locations()}; "
+    #     layout_info += f"Pots: {self.mdp.get_pot_locations()}. "
+
+    #     # =========================================================
+    #     # [NEW] 2. 이동 및 계획 히스토리 (History Info)
+    #     # =========================================================
+    #     history_prompt = ""
+    #     curr_pos = ego.position
+        
+
+            
+    #     history_prompt += f"\n<Player {self.agent_index}> History: "
+    #     history_prompt += f"Moved: {self.prev_partner_move} -> {curr_pos}" 
+        
+    #     # [핵심] 좌표가 같으면 막혔거나 멈췄음을 힌트로 제공
+    #     if self.prev_partner_move == curr_pos:
+    #         history_prompt += " (Stayed/Blocked). "
+    #     else:
+    #         history_prompt += ". "
+        
+    #     if self.prev_partner_move == None:
+    #         self.prev_partner_move = "Start"
+    #     else:
+    #         self.prev_partner_move = curr_pos
+
+    #     # 완료된 High-Level Plan 확인
+    #     if hasattr(self, 'previous_completed_plan') and self.previous_completed_plan:
+    #         history_prompt += f"Just Completed Plan: {self.previous_completed_plan}. "
+    #     else:
+    #         history_prompt += "Just Completed Plan: None. "
+
+    #     # =========================================================
+    #     # 3. 기존 정보들 (시간, 플레이어 상태) - *생략된 부분 복구*
+    #     # =========================================================
+    #     time_prompt = f"\nScene {state.timestep}: "
+        
+    #     # Ego(나) 상태 설명
+    #     ego_object = ego.held_object.name if ego.held_object else "nothing"
+    #     ego_state_prompt = f"<Player {self.agent_index}> holds "
+    #     if ego_object == 'soup':
+    #         ego_state_prompt += f"a dish with {ego_object} and needs to deliver soup. "
+    #     elif ego_object == 'nothing':
+    #         ego_state_prompt += f"{ego_object}. "
+    #     else:
+    #         ego_state_prompt += f"one {ego_object}. "
+        
+    #     # Teammate(동료) 상태 설명
+    #     teammate_object = teammate.held_object.name if teammate.held_object else "nothing"
+    #     teammate_state_prompt = f"<Player {1-self.agent_index}> holds "
+    #     if teammate_object == 'soup':
+    #         teammate_state_prompt += f"a dish with {teammate_object}. "
+    #     elif teammate_object == "nothing":
+    #         teammate_state_prompt += f"{teammate_object}. "
+    #     else:
+    #         teammate_state_prompt += f"one {teammate_object}. "
+
+    #     # =========================================================
+    #     # 4. 주방 냄비 상태 (Kitchen State) - *생략된 부분 복구*
+    #     # =========================================================
+    #     kitchen_state_prompt = "Kitchen states: "
+    #     prompt_dict = {
+    #         "empty": "<Pot {id}> is empty; ",
+    #         "cooking": "<Pot {id}> starts cooking, the soup will be ready after {t} timesteps; ",
+    #         "ready": "<Pot {id}> has already cooked the soup; ",
+    #         "1_items": "<Pot {id}> has 1 onion; ",
+    #         "2_items": "<Pot {id}> has 2 onions; ",
+    #         "3_items": "<Pot {id}> has 3 onions and is full; "
+    #     }
+
+    #     pot_states_dict = self.mdp.get_pot_states(state)   
+    #     import pkg_resources # 버전 체크용
+
+    #     # 버전별 냄비 상태 처리 로직 (기존 코드 유지)
+    #     if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
+    #         for key in pot_states_dict.keys():
+    #             if key == "cooking":
+    #                 for pos in pot_states_dict[key]:
+    #                     pot_id = self.pot_id_to_pos.index(pos)
+    #                     soup_object = state.get_object(pos)
+    #                     kitchen_state_prompt += prompt_dict[key].format(id=pot_id, t=soup_object.cook_time_remaining)
+    #             else:
+    #                 for pos in pot_states_dict[key]:
+    #                     pot_id = self.pot_id_to_pos.index(pos)
+    #                     kitchen_state_prompt += prompt_dict[key].format(id=pot_id) 
+        
+    #     elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
+    #         for key in pot_states_dict.keys():
+    #             if key == "empty":
+    #                 for pos in pot_states_dict[key]: 
+    #                     pot_id = self.pot_id_to_pos.index(pos)
+    #                     kitchen_state_prompt += prompt_dict[key].format(id=pot_id)     
+    #             else: 
+    #                 for soup_key in pot_states_dict[key].keys():
+    #                     for pos in pot_states_dict[key][soup_key]:
+    #                         pot_id = self.pot_id_to_pos.index(pos)
+    #                         soup_object = state.get_object(pos)
+    #                         soup_type, num_items, cook_time = soup_object.state
+    #                         if soup_key == "cooking":
+    #                             kitchen_state_prompt += prompt_dict[soup_key].format(id=pot_id, t=self.mdp.soup_cooking_time-cook_time)
+    #                         elif soup_key == "partially_full":
+    #                             pass
+    #                         else:
+    #                             kitchen_state_prompt += prompt_dict[soup_key].format(id=pot_id)
+
+    #     # Forced Coordination 맵 특수 처리 (기존 코드 유지)
+    #     if self.layout == 'forced_coordination': 
+    #         from utils import get_intersect_counter, query_counter_states # 필요시 import 확인
+    #         intersect_counters = get_intersect_counter(
+    #                             state.players_pos_and_or[self.agent_index], 
+    #                             state.players_pos_and_or[1 - self.agent_index], 
+    #                             self.mdp, 
+    #                             self.mlam
+    #                         )
+    #         counter_states = query_counter_states(self.mdp, state)  
+            
+    #         kitchen_state_prompt += '{} counters can be visited by <Player {}>. Their states are as follows: '.format(len(intersect_counters), self.agent_index)
+    #         count_states = {}  
+    #         for i in intersect_counters:  
+    #             obj_i = 'nothing' 
+    #             if counter_states[i] != ' ': 
+    #                 obj_i = counter_states[i]                
+    #             if obj_i in count_states:  
+    #                 count_states[obj_i] += 1
+    #             else: 
+    #                 count_states[obj_i]  = 1 
+    #         total_obj = ['onion', 'dish']
+    #         for i in count_states:   
+    #             if i == 'nothing': 
+    #                 continue 
+    #             kitchen_state_prompt += f'{count_states[i]} counters have {i}. '   
+    #         for i in total_obj: 
+    #             if i not in count_states:        
+    #                 kitchen_state_prompt += f'No counters have {i}. ' 
+
+    #         teammate_state_prompt = "" # 이 맵에서는 동료 정보 숨김
+
+    #     # =========================================================
+    #     # 5. 디버깅 및 반환
+    #     # =========================================================
+    #     final_prompt = (self.layout_prompt + 
+    #                     layout_info +           # [New]
+    #                     time_prompt + 
+    #                     ego_state_prompt + 
+    #                     history_prompt +        # [New]
+    #                     teammate_state_prompt + 
+    #                     kitchen_state_prompt)
+        
+    #     # 디버깅용 출력 (너무 빠르면 주석 처리)
+    #     print("PROMPT:", final_prompt)
+        
+    #     return final_prompt
+
     def generate_state_prompt(self, state):
         ego = state.players[self.agent_index]
         teammate = state.players[1 - self.agent_index]
 
         # =========================================================
-        # [NEW] 1. 맵의 고정 위치 정보 (Layout Info)
+        # 1. 맵의 고정 위치 정보 (Layout Info)
         # =========================================================
-        # self.mdp에서 위치 정보를 가져와 리스트 형태로 바로 넣습니다.
         layout_info = "Layout Information: "
         layout_info += f"Onion Dispensers: {self.mdp.get_onion_dispenser_locations()}; "
         layout_info += f"Dish Dispensers: {self.mdp.get_dish_dispenser_locations()}; "
@@ -210,26 +379,32 @@ class ProMediumLevelAgent(ProAgent):
         layout_info += f"Pots: {self.mdp.get_pot_locations()}. "
 
         # =========================================================
-        # [NEW] 2. 이동 및 계획 히스토리 (History Info)
+        # 2. 이동 및 계획 히스토리 (History Info) - [수정됨]
         # =========================================================
         history_prompt = ""
         curr_pos = ego.position
         
-        # 이전 위치 확인
-        if hasattr(self, 'prev_state') and self.prev_state:
-            prev_pos = self.prev_state.players[self.agent_index].position
+        # [수정] 변수가 없거나 None인 경우(첫 시작)를 먼저 처리
+        if not hasattr(self, 'prev_partner_move') or self.prev_partner_move is None:
+            prev_pos_str = "Start"
+            is_blocked = False
         else:
-            prev_pos = "Start"
-            
+            prev_pos_str = str(self.prev_partner_move)
+            # 이전 위치와 현재 위치가 같으면 막혔거나(Stayed) 멈춘 것으로 판단
+            is_blocked = (self.prev_partner_move == curr_pos)
+
         history_prompt += f"\n<Player {self.agent_index}> History: "
-        history_prompt += f"Moved: {prev_pos} -> {curr_pos}" 
+        history_prompt += f"Moved: {prev_pos_str} -> {curr_pos}" 
         
         # [핵심] 좌표가 같으면 막혔거나 멈췄음을 힌트로 제공
-        if prev_pos == curr_pos:
+        if prev_pos_str != "Start" and is_blocked:
             history_prompt += " (Stayed/Blocked). "
         else:
             history_prompt += ". "
         
+        # [수정] 다음 턴을 위해 현재 위치를 저장 (프롬프트 작성 후 업데이트)
+        self.prev_partner_move = curr_pos
+            
         # 완료된 High-Level Plan 확인
         if hasattr(self, 'previous_completed_plan') and self.previous_completed_plan:
             history_prompt += f"Just Completed Plan: {self.previous_completed_plan}. "
@@ -237,7 +412,7 @@ class ProMediumLevelAgent(ProAgent):
             history_prompt += "Just Completed Plan: None. "
 
         # =========================================================
-        # 3. 기존 정보들 (시간, 플레이어 상태) - *생략된 부분 복구*
+        # 3. 기존 정보들 (시간, 플레이어 상태)
         # =========================================================
         time_prompt = f"\nScene {state.timestep}: "
         
@@ -262,7 +437,7 @@ class ProMediumLevelAgent(ProAgent):
             teammate_state_prompt += f"one {teammate_object}. "
 
         # =========================================================
-        # 4. 주방 냄비 상태 (Kitchen State) - *생략된 부분 복구*
+        # 4. 주방 냄비 상태 (Kitchen State)
         # =========================================================
         kitchen_state_prompt = "Kitchen states: "
         prompt_dict = {
@@ -275,9 +450,9 @@ class ProMediumLevelAgent(ProAgent):
         }
 
         pot_states_dict = self.mdp.get_pot_states(state)   
-        import pkg_resources # 버전 체크용
+        import pkg_resources 
 
-        # 버전별 냄비 상태 처리 로직 (기존 코드 유지)
+        # 버전별 냄비 상태 처리 로직
         if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
             for key in pot_states_dict.keys():
                 if key == "cooking":
@@ -309,9 +484,9 @@ class ProMediumLevelAgent(ProAgent):
                             else:
                                 kitchen_state_prompt += prompt_dict[soup_key].format(id=pot_id)
 
-        # Forced Coordination 맵 특수 처리 (기존 코드 유지)
+        # Forced Coordination 맵 특수 처리
         if self.layout == 'forced_coordination': 
-            from utils import get_intersect_counter, query_counter_states # 필요시 import 확인
+            from utils import get_intersect_counter, query_counter_states
             intersect_counters = get_intersect_counter(
                                 state.players_pos_and_or[self.agent_index], 
                                 state.players_pos_and_or[1 - self.agent_index], 
@@ -342,21 +517,21 @@ class ProMediumLevelAgent(ProAgent):
             teammate_state_prompt = "" # 이 맵에서는 동료 정보 숨김
 
         # =========================================================
-        # 5. 디버깅 및 반환
+        # 5. 최종 조합 및 반환
         # =========================================================
         final_prompt = (self.layout_prompt + 
-                        layout_info +           # [New]
+                        layout_info +           
                         time_prompt + 
                         ego_state_prompt + 
-                        history_prompt +        # [New]
+                        history_prompt +        
                         teammate_state_prompt + 
                         kitchen_state_prompt)
         
-        # 디버깅용 출력 (너무 빠르면 주석 처리)
+        # 디버깅용 출력
         print("PROMPT:", final_prompt)
         
         return final_prompt
-      
+
     def generate_belief_prompt(self):
         ego_id = self.agent_index
         intention_prompt = f"All <Player {ego_id}> infered intentions about <Player {1-ego_id}>: {self.teammate_intentions_dict}.\n"

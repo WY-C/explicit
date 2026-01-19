@@ -58,6 +58,10 @@ Proagent의 exmaple생성방식 찾아보기
 
 이모티콘
 자연어
+
+수정사항들
+cook time argument -> 요리가 완료됨을 추가하는 argument + layout가서 따로 수정해주기
+
 """
 import time
 import datetime
@@ -126,74 +130,176 @@ class HumanAgent(Agent):
             return a
         return (0,0)
     
-
 def render_game(window, visualizer, env, step, horizon, reward, thought_msg=None, is_thinking=False):
-    """
-    게임 화면, 상태 텍스트, 에이전트 생각, 로딩 표시를 그리는 통합 함수
-    """
     if not window or not visualizer:
         return
 
-    # 1. 기본 배경 및 게임 상태 그리기
-    window.fill((255, 255, 255)) # 흰색 배경
-    
-    state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
+    # 1. 배경 및 게임 화면 (하단 배치)
+    window.fill((255, 255, 255)) 
     screen_width, screen_height = window.get_size()
+
+    state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
     surf_width, surf_height = state_surface.get_size()
     
     start_x = (screen_width - surf_width) // 2
-    start_y = (screen_height - surf_height) // 2
+    start_y = screen_height - surf_height - 30 
+    if start_y < 300: start_y = 300 
+
     window.blit(state_surface, (start_x, start_y))
 
-    # 2. 상단 상태 정보 (Step, Reward)
-    font = pygame.font.SysFont(None, 36)
+    # 2. 상단 상태 정보
+    font = pygame.font.SysFont("malgungothic", 30) 
     text = font.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
     window.blit(text, (10, 10))
 
-    # 3. 에이전트 생각(Thought) 텍스트 출력
+    # 3. [핵심] 텍스트 내용을 아이콘으로 '완전 대체'하여 그리기
     if thought_msg:
-        # 메시지 파싱 (기존 로직 유지)
+        # 메시지 정리
         if "Intention for Player" in thought_msg:
             thought_msg = thought_msg[thought_msg.find("Intention for Player"):]
-            thought_msg = thought_msg.replace("Intention for Player 1", "Intention for Player")
         if "Plan for Player 0" in thought_msg:
             thought_msg = thought_msg.replace("Plan for Player 0", "\nPlan for Agent")
         
         lines = thought_msg.split('\n')
         
-        # 텍스트 그리기
-        bubble_font = pygame.font.SysFont("malgungothic", 20)
-        current_y = 50
+        # 폰트 및 설정
+        bubble_font = pygame.font.SysFont("malgungothic", 28) 
+        text_color = (0, 0, 0)
+        
+        icon_size = 45    
+        line_height = 55  
+        current_y = 60    
+        left_margin = 10  
+
+        # 검색할 키워드 순서 중요 (긴 단어 우선 혹은 중요도 순)
+        # 키워드가 발견되면 해당 이미지를 매핑
+        icon_map = {
+            "onion": "onion", "양파": "onion",
+            #"tomato": "tomato", "토마토": "tomato",
+            "dish": "dish", "접시": "dish",
+            #"pot": "pot", "냄비": "pot",
+            #"soup": "soup_done", "수프": "soup_done",
+            #"serve": "serve" # serve 관련 텍스트가 있을 경우
+        }
+
         for line in lines:
-            text_surf = font.render(line, True, (0, 0, 0), (255, 255, 255))
-            window.blit(text_surf, (10, current_y))
-            current_y += 15 # 줄간격 약간 조정
+            line_lower = line.lower()
+            sprite_name = None
+            
+            # 1. 문장 안에 재료/도구 키워드가 있는지 확인
+            for key, s_name in icon_map.items():
+                if key in line_lower:
+                    sprite_name = s_name
+                    break # 하나 찾으면 중단 (예: onion 찾으면 끝)
+            
+            # 2. 라벨(Header) 추출 (콜론 앞부분만 따오기)
+            # 예: 'Intention for Player 1: "put_onion()"' -> 'Intention for Player 1'
+            if ":" in line:
+                label_text = line.split(":")[0].strip() + " : "
+            else:
+                label_text = line # 콜론이 없으면 그냥 통째로 라벨 취급
 
-    # 4. [핵심] 생각 중 표시 (is_thinking=True 일 때만)
-    if is_thinking:
-        loading_font = pygame.font.SysFont("malgungothic", 40, bold=True)
-        loading_text = font.render("Agent is thinking... ", True, (0, 0, 0)) # 빨간색
-        
-        # 화면 중앙 상단에 배치
-        text_rect = loading_text.get_rect(center=(screen_width // 2, 80))
-        
-        # 배경에 반투명 박스를 깔아주면 글자가 더 잘 보임 (선택사항)
-        bg_rect = text_rect.inflate(20, 10)
-        pygame.draw.rect(window, (255, 255, 255), bg_rect)
-        pygame.draw.rect(window, (0, 0, 0), bg_rect, 2) # 테두리
-        
-        window.blit(loading_text, text_rect)
+            # 3. 그리기
+            # 텍스트 렌더링 (라벨만)
+            text_surf = bubble_font.render(label_text, True, text_color)
+            
+            # 텍스트 수직 중앙 위치
+            text_y_pos = current_y + (line_height - text_surf.get_height()) // 2
+            window.blit(text_surf, (left_margin, text_y_pos))
+            
+            # 4. 아이콘이 있으면 텍스트 바로 뒤에 그림
+            if sprite_name:
+                icon_x = left_margin + text_surf.get_width() + 10 # 10px 간격
+                
+                temp_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
+                visualizer.OBJECTS_IMG.blit_on_surface(temp_surf, (0, 0), sprite_name)
+                scaled_icon = pygame.transform.scale(temp_surf, (icon_size, icon_size))
+                
+                icon_y_pos = current_y + (line_height - icon_size) // 2
+                window.blit(scaled_icon, (icon_x, icon_y_pos))
+            
+            # 아이콘이 없는 문장이면(키워드 못 찾음), 뒤에 원래 텍스트 내용을 그냥 흐리게라도 보여줄지, 
+            # 아니면 아예 안 보여줄지 결정해야 함. 
+            # 여기서는 요청하신 대로 '아이콘이 없으면 그냥 빈칸' 혹은 '원본 텍스트 내용'을 띄웁니다.
+            # (현재 코드는 키워드 없으면 라벨만 나옴. 내용을 보고 싶으면 아래 else 주석 해제)
+            else:
+                 # 키워드를 못 찾았을 때 뒤에 내용을 텍스트로라도 보여주고 싶다면:
+                 full_text_surf = bubble_font.render(line, True, text_color)
+                 window.blit(full_text_surf, (left_margin, text_y_pos))
 
-    # 5. 화면 업데이트
+            current_y += line_height
+
     pygame.display.flip()
+
+# def render_game(window, visualizer, env, step, horizon, reward, thought_msg=None, is_thinking=False):
+#     """
+#     게임 화면, 상태 텍스트, 에이전트 생각, 로딩 표시를 그리는 통합 함수
+#     """
+#     if not window or not visualizer:
+#         return
+
+#     # 1. 기본 배경 및 게임 상태 그리기
+#     window.fill((255, 255, 255)) # 흰색 배경
+    
+#     state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
+#     screen_width, screen_height = window.get_size()
+#     surf_width, surf_height = state_surface.get_size()
+    
+#     start_x = (screen_width - surf_width) // 2
+#     start_y = (screen_height - surf_height) // 2
+#     window.blit(state_surface, (start_x, start_y))
+
+#     # 2. 상단 상태 정보 (Step, Reward)
+#     font = pygame.font.SysFont(None, 36)
+#     text = font.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
+#     window.blit(text, (10, 10))
+
+#     # 3. 에이전트 생각(Thought) 텍스트 출력
+#     if thought_msg:
+#         # 메시지 파싱 (기존 로직 유지)
+#         if "Intention for Player" in thought_msg:
+#             thought_msg = thought_msg[thought_msg.find("Intention for Player"):]
+#             thought_msg = thought_msg.replace("Intention for Player 1", "Intention for Player")
+#         if "Plan for Player 0" in thought_msg:
+#             thought_msg = thought_msg.replace("Plan for Player 0", "\nPlan for Agent")
+        
+#         lines = thought_msg.split('\n')
+        
+#         # 텍스트 그리기
+#         bubble_font = pygame.font.SysFont("malgungothic", 20)
+#         current_y = 50
+#         for line in lines:
+#             text_surf = font.render(line, True, (0, 0, 0), (255, 255, 255))
+#             window.blit(text_surf, (10, current_y))
+#             current_y += 15 # 줄간격 약간 조정
+
+#     # 4. [핵심] 생각 중 표시 (is_thinking=True 일 때만)
+#     if is_thinking:
+#         loading_font = pygame.font.SysFont("malgungothic", 40, bold=True)
+#         loading_text = font.render("Agent is thinking... ", True, (0, 0, 0)) # 빨간색
+        
+#         # 화면 중앙 상단에 배치
+#         text_rect = loading_text.get_rect(center=(screen_width // 2, 80))
+        
+#         # 배경에 반투명 박스를 깔아주면 글자가 더 잘 보임 (선택사항)
+#         bg_rect = text_rect.inflate(20, 10)
+#         pygame.draw.rect(window, (255, 255, 255), bg_rect)
+#         pygame.draw.rect(window, (0, 0, 0), bg_rect, 2) # 테두리
+        
+#         window.blit(loading_text, text_rect)
+
+#     # 5. 화면 업데이트
+#     pygame.display.flip()
 
 
 def main(variant):
+    #step_duration = 500
     layout = variant['layout']
     horizon = variant['horizon']
     episode = variant['episode']
     mode = variant['mode']
     render = variant['render'] # 렌더링 여부 확인
+    cook_time = variant['cook_time']
     
     if VERSION == '1.1.0':
         mdp = OvercookedGridworld.from_layout_name(NEW_LAYOUTS[layout])
@@ -208,7 +314,7 @@ def main(variant):
     window_surface = None
     if render:
         pygame.init()
-        visualizer = StateVisualizer()
+        visualizer = StateVisualizer(cook_time = cook_time)
         window_surface = pygame.display.set_mode((800, 600)) 
         pygame.display.set_caption("ProAgent vs Human")
     
@@ -276,29 +382,46 @@ def main(variant):
                         has_proagent = 0
                     
                     for t in range(horizon):
+                        # 1. 스텝 시작 시간 및 변수 초기화
+                        step_start_time = pygame.time.get_ticks()
+                        step_duration = 400  # 400ms 고정
+                        
+                        # [중요] event.clear() 제거! (입력 씹힘 방지)
+                        # 대신, 이번 턴에 행동을 정했는지 확인하는 플래그 사용
+                        action_chosen = False 
+                        chosen_action = (0, 0) # 기본값: 정지(Stay)
+
+                        # 2. 렌더링 (첫 프레임)
                         first = True
-                        # [렌더링 로직] render=True일 때만 실행
                         if render and first:
                             first = False
                             if has_proagent == 1:
                                 current_thought = agents_list[num_pro].current_thought 
                             else:
                                 current_thought = "No ProAgent"
-                            
-                            # 함수 호출 (일반 상태)
                             render_game(window_surface, visualizer, env, t, horizon, r_total, current_thought, is_thinking=False)
+                        
+                        # 3. [핵심] 400ms가 지날 때까지 무조건 루프를 돕니다.
+                        # 입력을 빨리 했어도 여기서 시간을 떼웁니다 (Non-blocking Wait).
+                        while True:
+                            # 60FPS 유지
+                            clock.tick(60)
                             
-                            # [수정됨] 이벤트 처리 루프: 키 입력을 set_next_action으로 전달
-                        action_received = False
-                        while not action_received:
-                            clock.tick(60) # 입력 대기 중에는 60FPS로 반응성 유지
-                            
+                            current_time = pygame.time.get_ticks()
+                            elapsed = current_time - step_start_time
+
+                            # 400ms가 지나면 루프 탈출 -> 다음 스텝 진행
+                            if elapsed >= step_duration:
+                                break
+
+                            # 이벤트 처리
                             for event in pygame.event.get():
                                 if event.type == pygame.QUIT:
                                     pygame.quit()
                                     return
                                 
-                                if event.type == pygame.KEYDOWN:
+                                # 키 입력 처리 (이미 이번 턴에 행동을 결정했다면 무시)
+                                if event.type == pygame.KEYDOWN and not action_chosen:
                                     key = event.key
                                     action = None
                                     if key == pygame.K_UP: action = (0, -1)
@@ -308,35 +431,37 @@ def main(variant):
                                     elif key == pygame.K_SPACE: action = "interact"
                                     
                                     if action is not None:
-                                        # HumanAgent에게 행동 주입
-                                        agents_list[num_human].set_next_action(action)
-                                        action_received = True # 루프 탈출 조건 충족
+                                        chosen_action = action
+                                        action_chosen = True 
+                                        # [중요] break 하지 않음! 
+                                        # 행동은 입력받았지만, 시간(400ms)은 다 채우고 나갑니다.
+                        
+                        # 4. 루프가 끝나면(400ms 경과) 결정된 행동을 에이전트에 주입
+                        # 입력이 없었으면 기본값 (0,0)이 들어감
+                        agents_list[num_human].set_next_action(chosen_action)
 
-                        # 3. 행동 실행 (Step 진행)
-                        # 이미 HumanAgent에 set_next_action을 했으므로 joint_action 호출 시 해당 행동이 나옴
+                        # 5. 환경 업데이트 (Step)
                         s_t = env.state
                         a_t = []
                         a_t.append(team.agents[0].action(s_t))
+                        
                         if render:
-                            # 기존 생각 메시지는 유지하되, 'is_thinking=True'로 설정하여 호출
                             if has_proagent == 1:
                                 current_thought = agents_list[num_pro].current_thought
                             render_game(window_surface, visualizer, env, t, horizon, r_total, current_thought, is_thinking=True)
-                            
-                            pygame.event.pump() # 응답 없음 방지
+                            pygame.event.pump() 
 
                         a_t.append(team.agents[1].action(s_t))
-                        print("a_t: ", a_t)
                         a_t = tuple(a_t)
-                        #print("a_t: ", a_t)
-                        #a_t = team.joint_action(s_t) # AI도 이때 계산함 (Sync 맞춤)
                         
                         obs, reward, done, env_info = env.step(a_t)
                         r_total += reward
                         render_game(window_surface, visualizer, env, t, horizon, r_total, current_thought, is_thinking=False)
-                        pygame.time.wait(400) # 500ms 대기
+                        
+                        # [삭제] 마지막의 pygame.time.wait()는 이제 필요 없습니다.
+                        # 위쪽의 while 루프가 정확히 시간을 맞춰줍니다.
+                        
                         if done: break
-
                 else:
                     
                     for t in range(horizon):
@@ -425,7 +550,7 @@ if __name__ == '__main__':
     parser.add_argument('--p0',  type=str, default='ProAgent', help='Algorithm for P0 agent 0')
     parser.add_argument('--p1', type=str, default='Greedy', help='Algorithm for P1 agent 1')
     parser.add_argument('--horizon', type=int, default=400, help='Horizon steps in one game')
-    
+    parser.add_argument('--cook_time', type=int, default=20)
     parser.add_argument('--episode', type=int, default=1, help='Number of episodes')
     parser.add_argument('--render', type=boolean_argument, default=True, help='Visualization on/off')
 
@@ -443,6 +568,8 @@ if __name__ == '__main__':
     parser.add_argument('--save', type=boolean_argument, default=True)
     parser.add_argument('--log_dir', type=str, default=None)
     parser.add_argument('--debug', type=boolean_argument, default=True)
+
+    
 
     args = parser.parse_args()
     variant = vars(args)

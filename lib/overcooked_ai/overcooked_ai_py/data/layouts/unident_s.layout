@@ -5,7 +5,7 @@
                 X2  P   X
                 XXXDXDXXX""",
     "start_order_list": None,
-    "cook_time": 5,
+    "cook_time": 10,
     "num_items_for_soup": 3,
     "delivery_reward": 20,
     "rew_shaping_params": None

@@ -57,11 +57,12 @@ class StateVisualizer:
         SERVING_LOC: "serve"
     }
 
-    def __init__(self, **kwargs):
+    def __init__(self, cook_time = 0, **kwargs):
         params = copy.deepcopy(self.DEFAULT_VALUES)
         params.update(kwargs)
         self.configure(**params)
         self.reload_fonts()
+        self.cook_time = cook_time
 
     def reload_fonts(self):
         pygame.font.init()
@@ -310,10 +311,16 @@ class StateVisualizer:
             #todo check
             (x_pos, y_pos) = obj.position
             if grid[y_pos][x_pos] == POT:
-                if obj.state[2]<20:
-                    soup_status="idle"
+                if self.cook_time == 0:
+                    if obj.state[2] < 20:
+                        soup_status="idle"
+                    else:
+                        soup_status="cooked"
                 else:
-                    soup_status="cooked"
+                    if obj.state[2] < self.cook_time:
+                        soup_status="idle"
+                    else:
+                        soup_status="cooked"
             else :
                 soup_status='done'
             #frame_name = StateVisualizer._soup_frame_name(obj.ingredients, soup_status)
