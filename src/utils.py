@@ -14,6 +14,8 @@ from overcooked_ai_py.utils import load_dict_from_file, load_pickle
 
 
 from proagent.proagent import ProMediumLevelAgent
+from proagent.myagent import ProMediumLevelAgent as ProMediumLevelAgent
+from proagent.myagent_aysnc import ProMediumLevelAgent as ProMediumLevelAgent_aysnc
 
 from collections import defaultdict
 from stable_baselines import GAIL
@@ -52,7 +54,7 @@ def make_agent(alg:str, mdp, layout, **gptargs):
         print(f'using seed = {run_dir}')
         agent, config = get_bc_agent_from_saved(run_dir)
 
-    elif alg == "ProAgent" or alg == "Greedy":
+    elif alg == "ProAgent" or alg == "Greedy" or alg == "MyAgent" or alg == "MyAgentAsync":
         MLAM_PARAMS = {
             "start_orientations": False,
             "wait_allowed": True,
@@ -62,6 +64,7 @@ def make_agent(alg:str, mdp, layout, **gptargs):
             "same_motion_goals": True,
         }
         counter_locations = mdp.get_counter_locations()
+
         MLAM_PARAMS["counter_goals"] = counter_locations
         MLAM_PARAMS["counter_drop"] = counter_locations
         MLAM_PARAMS["counter_pickup"] = counter_locations
@@ -69,7 +72,12 @@ def make_agent(alg:str, mdp, layout, **gptargs):
         if alg == "ProAgent":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
             agent = ProMediumLevelAgent(mlam, layout, **gptargs)
-
+        elif alg == "MyAgentAsync":
+            mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
+            agent = ProMediumLevelAgent_aysnc(mlam, layout, **gptargs)
+        elif alg == "MyAgent":
+            mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
+            agent = ProMediumLevelAgent(mlam, layout, **gptargs)
         elif alg == "Greedy":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True)
             agent = GreedyHumanModel(mlam)      
@@ -77,9 +85,12 @@ def make_agent(alg:str, mdp, layout, **gptargs):
     elif alg in ['COLE', 'FCP', 'MEP', 'PBT', 'SP']:
         old_layout = OLD_LAYOUTS[layout]
         agent_path = f"models/{old_layout}/{alg}"
+        print(load_dict_from_file(os.path.abspath(os.path.join(agent_path, "params.txt"))))
         config = load_dict_from_file(agent_path + "/params.txt")
         agent = get_agent_from_saved_model(agent_path, config["sim_threads"])
 
+    elif alg in ['Human']:
+        agent = KeyboardAgent()
     else:
         raise ValueError("Unsupported algorithm.")
 
@@ -320,3 +331,62 @@ class ImitationAgentFromPolicy(AgentFromPolicy):
 
     def reset(self):
         self.history = defaultdict(lambda: [None] * self.history_length)
+
+
+import pygame # 상단 import 추가
+from overcooked_ai_py.mdp.actions import Action, Direction
+
+class KeyboardAgent(object):
+    """
+    Pygame 이벤트를 통해 키 입력을 받는 에이전트
+    """
+    def __init__(self):
+        self.agent_index = None
+        self.mdp = None
+
+    def set_mdp(self, mdp):
+        self.mdp = mdp
+
+    def set_agent_index(self, agent_index):
+        self.agent_index = agent_index
+
+    def reset(self):
+        pass
+
+    def action(self, state):
+        # Pygame 이벤트 큐를 처리하여 키 입력을 확인
+        action = Action.STAY
+        
+        # 루프를 돌며 키 입력을 대기 (반응성을 위해 약간의 대기 필요)
+        loop = True
+        while loop:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_UP:
+                        action = Direction.NORTH
+                        loop = False
+                    elif event.key == pygame.K_DOWN:
+                        action = Direction.SOUTH
+                        loop = False
+                    elif event.key == pygame.K_LEFT:
+                        action = Direction.WEST
+                        loop = False
+                    elif event.key == pygame.K_RIGHT:
+                        action = Direction.EAST
+                        loop = False
+                    elif event.key == pygame.K_f: # 상호작용 키 (f)
+                        action = Action.INTERACT
+                        loop = False
+                    elif event.key == pygame.K_SPACE: # 대기 (space)
+                        action = Action.STAY
+                        loop = False
+            
+            # CPU 점유율 방지 및 화면 업데이트를 위한 짧은 대기
+            # (AI vs AI 모드일 때는 이 루프를 없애고 바로 리턴하게 할 수도 있습니다)
+            pass 
+            
+        return action, {}

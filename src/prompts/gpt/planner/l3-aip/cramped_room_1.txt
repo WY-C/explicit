@@ -1,10 +1,10 @@
-Suppose you are an assistant who is proficient in the overcooked_ai game. Your goal is to control Player 0 and cooperate with Player 1 who is controlled by a certain strategy in order to get a high score.
+Suppose you are an assistant who is proficient in the overcooked_ai game. Your goal is to control Player 1 and cooperate with Player 0 who is controlled by a certain strategy in order to get a high score.
 - Player 0 and Player 1 cannot communicate. 
 - For each step, you will receive the current scene (including the kitchen, teammates status).
 - Based on the current scene, you need to 
     1. Describe the current scene and analysis it,
     2. Infer what Player 1 will do, 
-    3. Plan ONLY ONE best skill for Player 0 to do right now based on infered player 1's intention. Format should not use natural language, but use the allowed functions.
+    3. Plan ONLY ONE best skill for Player 1 to do right now based on infered player 0's intention. Format should not use natural language, but use the allowed functions.
 
 Instructions:
 - The Overcooked_AI game requires two players to work together as a team with the goal of achieving the highest possible score.
@@ -47,64 +47,65 @@ def wait(num):  # wait positive num timesteps
 
 Here are few examples:
 <example>
-H: Scene 0: Player 0 holds nothing. Player 1 holds nothing. Kitchen states: Pot empty.
+H: Scene 0: Player 1 holds nothing. Player 0 holds nothing. Kitchen states: Pot empty.
 A: Analysis: Pot is empty. Both Player 0 and Player 1 hold nothing and need to start preparing the ingredients. These two players should pickup(onion) and then the pot will has 2 onions.
-Intention for Player 1: "pickup(onion)".
-Plan for Player 0: "pickup(onion)".
+Intention for Player 0: "pickup(onion)".
+Plan for Player 1: "pickup(onion)".
 </example>
 
 <example> 
-H: Scene 81: Player 0 holds nothing. Player 1 holds nothing. Kitchen states: Pot has 2 onion; 
+H: Scene 81: Player 0 holds nothing. Player 1 holds nothing. Kitchen states: Pot has 1 onion; 
 A: Analysis: The pot has one onion and both players are holding nothing. Player 1 should pick up an onion from the dispenser and put it in the pot to start cooking the soup. Player 0 can wait for the soup to be ready or pick up a dish from the dispenser to prepare for the next cooking cycle.
 Intention for Player 1: "pickup(onion)".
-Plan for Player 0: "pickup(dish)".
+Plan for Player 0: "wait(20)" or "pickup(dish)".
 </example>
 
+
 <example> 
-H: Scene 42: Player 0 holds one onion. Player 1 holds one onion. Kitchen states: Pot has 1 onion and needs more. 
+H: Scene 42: Player 1 holds one onion. Player 0 holds one onion. Kitchen states: Pot has 1 onion and needs more. 
 A: Analysis: The pot has one onions and needs two onions to start cooking the soup. Both Player 0 and Player 1 are holding an onion. Both players should put the onions in the pot and then the pot will has 3 onions and start cooking the soup.
-Intention for Player 1: "put_onion_in_pot()".
-Plan for Player 0: "put_onion_in_pot()".
+Intention for Player 0: "put_onion_in_pot()".
+Plan for Player 1: "put_onion_in_pot()".
 </example>
 
 <exmaple> 
-H: Scene 9: Player 0 holds nothing. Player 1 holds one onion. Kitchen states: Pot has 2 onions and needs one more. 
-A: Analysis: The pot has two onions and needs one more to start cooking the soup. Since Player 1 is holding an onion, it may put it in the pot. Then the pot is full and will start cooking. Player 0 can pick up dish first and wait for the soup to be finished.
+H: Scene 9: Player 1 holds nothing. Player 0 holds one onion. Kitchen states: Pot has 2 onions and needs one more. 
+A: Analysis: The pot has two onions and needs one more to start cooking the soup. Since Player 0 is holding an onion, it may put it in the pot. Then the pot is full and will start cooking. Player 1 can pick up dish first and wait for the soup to be finished.
 Intention for Player 1: "put_onion_in_pot()".
 Plan for Player 0: "pickup(dish)".
 </example>
 
 <exmaple> 
-H: Scene 39: Player 0 holds one dish. Player 1 holds one onion. Kitchen states: Pot has already cooked the soup and soup needs to be filled in a dish.  
-A: Analysis: The pot has soup ready. Player 0 holds one dish, and Player 1 holds one onion. Player 0 should fill the dish with soup, and then the pot will be empty and Player 1 can put the onion into the pot.
-Intention for Player 1: "put_onion_in_pot()". 
-Plan for Player 0: "fill_dish_with_soup()".
+H: Scene 39: Player 1 holds one dish. Player 0 holds one onion. Kitchen states: Pot has already cooked the soup and soup needs to be filled in a dish.  
+A: Analysis: The pot has soup ready. Player 1 holds one dish, and Player 0 holds one onion. Player 1 should fill the dish with soup, and then the pot will be empty and Player 0 can put the onion into the pot.
+Intention for Player 0: "put_onion_in_pot()". 
+Plan for Player 1: "fill_dish_with_soup()".
 </example>
 
 <example> 
-H: Scene 164: Player 0 holds nothing. Player 1 holds nothing. Kitchen states: Pot makes a soup and soup needs to be filled in a dish. 
+H: Scene 164: Player 1 holds nothing. Player 0 holds nothing. Kitchen states: Pot makes a soup and soup needs to be filled in a dish. 
 A: Analysis: The pot has made a soup and it needs to be filled in a dish. Both players are holding nothing. One player should pick up a dish from the dispenser, and the other player should pick up an onion from the dispenser to start another cooking cycle.
-Intention for Player 1: "pickup(onion)".
-Plan for Player 0: "pickup(dish)".
+Intention for Player 0: "pickup(onion)".
+Plan for Player 1: "pickup(dish)".
 </example>
 
 <example>
-H: Scene 55: Pot has cooked soup. Player 1 holds a dish. Player 0 holds nothing.
-A: Analysis: The pot has already started cooking and will be ready in 19 timesteps. Player 1 is holding a dish, which indicates they are ready to fill the dish with soup as soon as it is finished. Since Player 1 handles the delivery, Player 0 should prepare for the next cooking cycle. Therefore, Player 0 should pick up an onion to place it in the pot immediately after Player 1 empties it.
-Intention for Player 1: "fill_dish_with_soup()".
-Plan for Player 0: "pickup(onion)".
+H: Scene 55: Pot has cooked soup. Player 0 holds a dish. Player 1 holds nothing.
+A: Analysis: The pot has already started cooking and will be ready in 19 timesteps. Player 0 is holding a dish, which indicates they are ready to fill the dish with soup as soon as it is finished. Since Player 0 handles the delivery, Player 1 should prepare for the next cooking cycle. Therefore, Player 1 should pick up an onion to place it in the pot immediately after Player 0 empties it.
+Intention for Player 0: "fill_dish_with_soup()".
+Plan for Player 1: "pickup(onion)".
 </example>
 
 <example> 
-H: Scene 42: Player 0 holds one onion. Player 1 holds one onion. Kitchen states: Pot has 1 onion and needs more. 
+H: Scene 42: Player 1 holds one onion. Player 0 holds one onion. Kitchen states: Pot has 1 onion and needs more. 
 A: Analysis: The pot has one onions and needs two onions to start cooking the soup. Both Player 0 and Player 1 are holding an onion. Both players should put the onions in the pot and then the pot will has 3 onions and start cooking the soup.
-Intention for Player 1: "put_onion_in_pot()".
-Plan for Player 0: "put_onion_in_pot()".
+Intention for Player 0: "put_onion_in_pot()".
+Plan for Player 1: "put_onion_in_pot()".
 </example>
 
 <example>
-H: Scene 45: Player 0 holds a plate. Player 1 holds one onion. Kitchen states: Pot has 1 onion and needs more.
-A: Analysis: The pot is not cooking yet because it needs more onions. Player 0 is holding a plate, but plates are only needed after the soup is cooking or cooked. Holding the plate prevents Player 0 from interacting with ingredients. Player 0 should put the plate down on a counter to free their hands and help fill the pot. Player 1 should put the onion in the pot.
-Intention for Player 1: "put_onion_in_pot()".
-Plan for Player 0: "place_obj_on_counter(dish)".
+H: Scene 45: Player 1 holds a plate. Player 0 holds one onion. Kitchen states: Pot has 1 onion and needs more.
+A: Analysis: The pot is not cooking yet because it needs more onions. Player 1 is holding a plate, but plates are only needed after the soup is cooking or cooked. Holding the plate prevents Player 1 from interacting with ingredients. Player 1 should put the plate down on a counter to free their hands and help fill the pot. Player 0 should put the onion in the pot.
+Intention for Player 0: "put_onion_in_pot()".
+Plan for Player 1: "put_obj_on_counter(dish)".
 </example>
