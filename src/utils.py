@@ -14,8 +14,8 @@ from overcooked_ai_py.utils import load_dict_from_file, load_pickle
 
 
 from proagent.proagent import ProMediumLevelAgent
-from proagent.myagent import ProMediumLevelAgent as ProMediumLevelAgent
-from proagent.myagent_aysnc import ProMediumLevelAgent as ProMediumLevelAgent_aysnc
+from proagent.IRAgent import ProMediumLevelAgent as MyAgent
+from proagent.IRAgent_async import ProMediumLevelAgent as Myagent_async
 
 from collections import defaultdict
 from stable_baselines import GAIL
@@ -72,12 +72,15 @@ def make_agent(alg:str, mdp, layout, **gptargs):
         if alg == "ProAgent":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
             agent = ProMediumLevelAgent(mlam, layout, **gptargs)
+        
         elif alg == "MyAgentAsync":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
-            agent = ProMediumLevelAgent_aysnc(mlam, layout, **gptargs)
+            agent = Myagent_async(mlam, layout, **gptargs)
+        
         elif alg == "MyAgent":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
-            agent = ProMediumLevelAgent(mlam, layout, **gptargs)
+            agent = MyAgent(mlam, layout, **gptargs)
+        
         elif alg == "Greedy":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True)
             agent = GreedyHumanModel(mlam)      

@@ -363,53 +363,62 @@ class ProMediumLevelAgent(ProAgent):
         ego = state.players[self.agent_index]
         teammate = state.players[1 - self.agent_index]
 
-        # =========================================================
-        # 1. 맵의 고정 위치 정보 (Layout Info)
-        # =========================================================
         layout_info = "Layout Information: "
         layout_info += f"Onion Dispensers: {self.mdp.get_onion_dispenser_locations()}; "
         layout_info += f"Dish Dispensers: {self.mdp.get_dish_dispenser_locations()}; "
         
         # 토마토는 있는 맵만 표시
-        tomato_locs = self.mdp.get_tomato_dispenser_locations()
-        if tomato_locs: 
-            layout_info += f"Tomato Dispensers: {tomato_locs}; "
+        # tomato_locs = self.mdp.get_tomato_dispenser_locations()
+        # if tomato_locs: 
+        #     layout_info += f"Tomato Dispensers: {tomato_locs}; "
             
         layout_info += f"Serving Locations: {self.mdp.get_serving_locations()}; "
         layout_info += f"Pots: {self.mdp.get_pot_locations()}. "
 
         # =========================================================
-        # 2. 이동 및 계획 히스토리 (History Info) - [수정됨]
+        # 2. 이동 및 계획 히스토리 (History Info) - [수정됨: 파트너의 경로]
         # =========================================================
         history_prompt = ""
-        curr_pos = ego.position
         
-        # [수정] 변수가 없거나 None인 경우(첫 시작)를 먼저 처리
-        if not hasattr(self, 'prev_partner_move') or self.prev_partner_move is None:
-            prev_pos_str = "Start"
+        # [수정] 추적 대상을 ego가 아닌 teammate로 변경
+        curr_partner_pos = teammate.position
+        partner_idx = 1 - self.agent_index
+        
+        # [수정] 파트너의 히스토리를 저장할 리스트 초기화
+        if not hasattr(self, 'partner_move_history'):
+            self.partner_move_history = []
+
+        # [수정] 프롬프트 ID를 파트너 ID로 변경
+        history_prompt += f"\n<Player {partner_idx}> History: "
+
+        # 경로 문자열 생성 (예: (1,1) -> (1,2) -> (2,2) -> (2,3))
+        if not self.partner_move_history:
+            # 첫 시작인 경우
+            move_str = f"Start -> {curr_partner_pos}"
             is_blocked = False
         else:
-            prev_pos_str = str(self.prev_partner_move)
-            # 이전 위치와 현재 위치가 같으면 막혔거나(Stayed) 멈춘 것으로 판단
-            is_blocked = (self.prev_partner_move == curr_pos)
+            # 과거 기록들을 화살표로 연결
+            past_moves_str = " -> ".join([str(pos) for pos in self.partner_move_history])
+            move_str = f"{past_moves_str} -> {curr_partner_pos}"
+            
+            # 바로 직전 위치(history의 마지막)와 현재 위치가 같으면 막혔거나 제자리로 판단
+            is_blocked = (self.partner_move_history[-1] == curr_partner_pos)
 
-        history_prompt += f"\n<Player {self.agent_index}> History: "
-        history_prompt += f"Moved: {prev_pos_str} -> {curr_pos}" 
+        history_prompt += f"Moved: {move_str}"
         
-        # [핵심] 좌표가 같으면 막혔거나 멈췄음을 힌트로 제공
-        if prev_pos_str != "Start" and is_blocked:
+        # 정지/막힘 상태 표시
+        if is_blocked:
             history_prompt += " (Stayed/Blocked). "
         else:
             history_prompt += ". "
         
-        # [수정] 다음 턴을 위해 현재 위치를 저장 (프롬프트 작성 후 업데이트)
-        self.prev_partner_move = curr_pos
+        # [수정] 히스토리 업데이트: 파트너 현재 위치 추가 후 3개 초과 시 가장 오래된 것 제거
+        self.partner_move_history.append(curr_partner_pos)
+        if len(self.partner_move_history) > 3:
+            self.partner_move_history.pop(0)
             
-        # 완료된 High-Level Plan 확인
-        if hasattr(self, 'previous_completed_plan') and self.previous_completed_plan:
-            history_prompt += f"Just Completed Plan: {self.previous_completed_plan}. "
-        else:
-            history_prompt += "Just Completed Plan: None. "
+        # 완료된 High-Level Plan 확인 (이 부분은 나의 계획인지 파트너의 계획인지 확인 필요하나, 기존 코드 유지)
+
 
         # =========================================================
         # 3. 기존 정보들 (시간, 플레이어 상태)
@@ -523,15 +532,14 @@ class ProMediumLevelAgent(ProAgent):
                         layout_info +           
                         time_prompt + 
                         ego_state_prompt + 
-                        history_prompt +        
                         teammate_state_prompt + 
+                        history_prompt +                              
                         kitchen_state_prompt)
         
         # 디버깅용 출력
         print("PROMPT:", final_prompt)
         
         return final_prompt
-
     def generate_belief_prompt(self):
         ego_id = self.agent_index
         intention_prompt = f"All <Player {ego_id}> infered intentions about <Player {1-ego_id}>: {self.teammate_intentions_dict}.\n"
@@ -823,11 +831,7 @@ class ProMediumLevelAgent(ProAgent):
         print("====== GPT Query ======")
         print(response)  
         self.current_thought = response
-        # -------------------------------------------------
-        # 3. 파싱 (Parsing)
-        # -------------------------------------------------
-        # print("\n===== Parser =====\n")
-        ## specific for prompt need intention
+
         if self.prompt_level == "l3-aip":
             generated_intention = self.parse_ml_action(response, 1-self.agent_index)
             self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention

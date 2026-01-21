@@ -9,7 +9,7 @@ from overcooked_ai_py.mdp.actions import Action, Direction
 from overcooked_ai_py.planning.search import find_path 
 from overcooked_ai_py.planning.search import get_intersect_counter 
 from overcooked_ai_py.planning.search import query_counter_states 
-import time
+
 cwd = os.getcwd()
 openai_key_file = os.path.join(cwd, "openai_key.txt")
 PROMPT_DIR = os.path.join(cwd, "prompts")
@@ -28,7 +28,7 @@ class ProAgent(object):
 	"""
 	This agent uses GPT-3.5 to generate actions.
 	"""
-	def __init__(self, model="Qwen/Qwen2-VL-7B-Instruct-AWQ"):
+	def __init__(self, model="Qwen/Qwen3-VL-8B-Instruct "):
 		self.agent_index = None
 		self.model = model
 
@@ -67,19 +67,19 @@ class ProMediumLevelAgent(ProAgent):
 			self,
 			mlam,
 			layout,
-			model='Qwen/Qwen2-VL-7B-Instruct-AWQ',
+			model='Qwen/Qwen3-VL-8B-Instruct',
 			prompt_level='l2-ap', # ['l1-p', 'l2-ap', 'l3-aip']
 			belief_revision=False,
 			retrival_method="recent_k",
-			K=3,
-			auto_unstuck=True,
+			K=1, 
+			auto_unstuck=False,
 			controller_mode='new', # the default overcooked-ai Greedy controller
 			debug_mode='N', 
 			agent_index=None,
-			outdir = None,
-
+			outdir = None 
 	):
 		super().__init__(model=model)
+
 		self.trace = True 
 		self.debug_mode = 'Y' 
 		self.controller_mode = controller_mode 
@@ -106,7 +106,7 @@ class ProMediumLevelAgent(ProAgent):
 		self.pot_id_to_pos = []
 
 		self.layout_prompt = self.generate_layout_prompt()
-		self.current_thought = ""
+
 
 	def set_mdp(self, mdp):
 		self.mdp = mdp
@@ -292,92 +292,53 @@ class ProMediumLevelAgent(ProAgent):
 	##################
 
 	def action(self, state):
-		# [Timing] 전체 시작
-		total_start_time = time.perf_counter()
-		checkpoint = total_start_time
-		timing_logs = {}
-		llm_details_list = [] # LLM이 여러번 호출될 경우 기록용
 
-		# ---------------------------------------------------------
-		# 1. 초기화 (Initialization)
-		# ---------------------------------------------------------
 		start_pos_and_or = state.players_pos_and_or[self.agent_index]
 
+		# only use to record the teammate ml_action, 
+		# if teammate finish ml_action in t-1, it will record in s_t, 
+		# otherwise, s_t will just record None,
+		# and we here check this information and store it into proagent
 		self.current_timestep = state.timestep
 		if state.ml_actions[1-self.agent_index] != None:
 			self.teammate_ml_actions_dict[str(self.current_timestep-1)] = state.ml_actions[1-self.agent_index]
-		
-		curr_time = time.perf_counter()
-		timing_logs['Init'] = curr_time - checkpoint
-		checkpoint = curr_time
 
-		# ---------------------------------------------------------
-		# 2. LLM Action 생성 (LLM Generation)
-		# ---------------------------------------------------------
+		# if current ml action does not exist, generate a new one
 		if self.current_ml_action is None:
 			self.current_ml_action = self.generate_ml_action(state)
-			# [Timing] 상세 기록 가져오기
-			if hasattr(self, 'last_llm_timing'):
-				llm_details_list.append(self.last_llm_timing)
 
+		# if the current ml action is in process, Player{self.agent_index} done, else generate a new one
 		if self.current_ml_action_steps > 0:
 			current_ml_action_done = self.check_current_ml_action_done(state)
 			if current_ml_action_done:
+				# generate a new ml action
 				self.generate_success_feedback(state)
 				self.current_ml_action = self.generate_ml_action(state)
-				# [Timing] 상세 기록 가져오기
-				if hasattr(self, 'last_llm_timing'):
-					llm_details_list.append(self.last_llm_timing)
 
-		curr_time = time.perf_counter()
-		timing_logs['LLM_Total_Block'] = curr_time - checkpoint
-		checkpoint = curr_time
-
-		# ---------------------------------------------------------
-		# 3. 유효성 검증 루프 (Validation Loop)
-		# ---------------------------------------------------------
 		count = 0
 		while not self.validate_current_ml_action(state):
+
 			self.trace = False
 			self.generate_failure_feedback(state)
-			
-			# 재성성
 			self.current_ml_action = self.generate_ml_action(state)
-			if hasattr(self, 'last_llm_timing'):
-				# 재시도 시에는 키를 구분하여 저장하거나 리스트에 추가
-				retry_log = self.last_llm_timing.copy()
-				retry_log['Type'] = 'Retry'
-				llm_details_list.append(retry_log)
 			
 			count += 1
 			if count > 3:
 				self.current_ml_action = "wait(1)"
 				self.time_to_wait = 1
 
-		curr_time = time.perf_counter()
-		timing_logs['Validation_Loop'] = curr_time - checkpoint
-		checkpoint = curr_time
-
-		# ---------------------------------------------------------
-		# 4. 모션 플래닝 (Motion Planning)
-		# ---------------------------------------------------------
+		
 		self.trace = True 
 		if "wait" in self.current_ml_action:
 			self.current_ml_action_steps += 1
 			self.time_to_wait -= 1
 			lis_actions = self.mdp.get_valid_actions(state.players[self.agent_index])
-			chosen_action = lis_actions[np.random.randint(0,len(lis_actions))]
-			
-			self.prev_state = state
-			
-			# [Report Print]
-			print(f"\n[Timing Step {state.timestep}] Total: {time.perf_counter() - total_start_time:.4f}s")
-			if llm_details_list:
-				print(f" >> LLM Breakdown: {json.dumps(llm_details_list, indent=2)}")
-			
+			chosen_action =lis_actions[np.random.randint(0,len(lis_actions))]
 			if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
+				self.prev_state = state
 				return chosen_action, {}
 			elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
+				self.prev_state = state
 				return chosen_action
 		else:
 			possible_motion_goals = self.find_motion_goals(state)    
@@ -386,33 +347,43 @@ class ProMediumLevelAgent(ProAgent):
 				possible_motion_goals, 
 				state
 			)
+		# if "wait" in self.current_ml_action: 
+		# 	print(f'current motion goal for P{self.agent_index} is wait') 
+		# else: 
+		# 	if current_motion_goal is None: 
+		# 		current_motion_goal = 'None' 
+		# 	print(f'current motion goal for P{self.agent_index} is {current_motion_goal}') 
 
-		curr_time = time.perf_counter()
-		timing_logs['Motion_Planning'] = curr_time - checkpoint
-		checkpoint = curr_time
 
-		# ---------------------------------------------------------
-		# 5. Unstuck & Finalize
-		# ---------------------------------------------------------
 		if self.auto_unstuck and chosen_action != Action.INTERACT:
-			if (self.prev_state is not None and state.players == self.prev_state.players):
-				# ... (Unstuck logic 생략, 원본 유지) ...
+			if (
+					self.prev_state is not None
+					and state.players
+					== self.prev_state.players
+			):
 				if self.agent_index == 0:
-					joint_actions = list(itertools.product(Action.ALL_ACTIONS, [Action.STAY]))
+					joint_actions = list(
+						itertools.product(Action.ALL_ACTIONS, [Action.STAY])
+					)
 				elif self.agent_index == 1:
-					joint_actions = list(itertools.product([Action.STAY], Action.ALL_ACTIONS))
-				
+					joint_actions = list(
+						itertools.product([Action.STAY], Action.ALL_ACTIONS)
+					)
+				else:
+					raise ValueError("Player index not recognized")
+
 				unblocking_joint_actions = []
-				# ... (Unstuck loop) ...
 				for j_a in joint_actions:
 					if j_a != [Action.INTERACT,Action.STAY] and  j_a != [Action.STAY,Action.INTERACT]:
 						if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
 							new_state, _ = self.mlam.mdp.get_state_transition(state, j_a)
 						elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
-							new_state, _, _ = self.mlam.mdp.get_state_transition(state, j_a)        
-						if new_state.players_pos_and_or != self.prev_state.players_pos_and_or:
+							new_state, _, _ = self.mlam.mdp.get_state_transition(state, j_a)		
+						if (
+								new_state.players_pos_and_or
+								!= self.prev_state.players_pos_and_or
+							):
 							unblocking_joint_actions.append(j_a)
-				
 				unblocking_joint_actions.append([Action.STAY, Action.STAY])
 				chosen_action = unblocking_joint_actions[
 					np.random.choice(len(unblocking_joint_actions))
@@ -425,16 +396,8 @@ class ProMediumLevelAgent(ProAgent):
 			chosen_action = Action.STAY
 		self.current_ml_action_steps += 1
 
-		curr_time = time.perf_counter()
-		timing_logs['Finalize'] = curr_time - checkpoint
-
-		# [Final Report]
-		total_duration = curr_time - total_start_time
-		print(f"\n[Timing Report - Step {state.timestep}] Total: {total_duration:.4f}s")
-		print(f"Overview: {json.dumps(timing_logs)}")
-		if llm_details_list:
-			print(f"LLM Details: {json.dumps(llm_details_list, indent=2)}")
-
+		# print(f'ml_action = {self.current_ml_action}') 
+		# print(f'P{self.agent_index} : {Action.to_char(chosen_action)}')
 		if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
 			return chosen_action, {}
 		elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
@@ -460,8 +423,7 @@ class ProMediumLevelAgent(ProAgent):
 		# Parse the response to get the medium level action string
 		try: 
 			ml_action = action_string.split()[0]
-		except:
-			print(f"\n[DEBUG] Raw LLM Response for Player {agent_index}: [{response}]")
+		except: 
 			print('failed on 528') 
 			action_string = 'wait(1)'
 			ml_action = action_string
@@ -539,7 +501,6 @@ class ProMediumLevelAgent(ProAgent):
 		"""
 		if self.prompt_level == "l3-aip" and self.belief_revision:
 			belief_prompt = self.generate_belief_prompt()
-			print("belief_prompt: ",belief_prompt)
 		else:
 			belief_prompt = ''
 		state_prompt = belief_prompt + self.generate_state_prompt(state)
@@ -557,8 +518,7 @@ class ProMediumLevelAgent(ProAgent):
 		
 		print(f"\n\n\n### GPT Planner module\n")   
 		print("====== GPT Query ======")
-		print(response) 
-		self.current_thought = response
+		print(response)  
 
 
 		print("\n===== Parser =====\n")
@@ -566,7 +526,7 @@ class ProMediumLevelAgent(ProAgent):
 		if self.prompt_level == "l3-aip":
 			generated_intention = self.parse_ml_action(response, 1-self.agent_index)
 			self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention
-			print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
+			print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")  
 			# if str(self.current_timestep) in self.teammate_intentions_dict:   
 			# 	self.teammate_intentions_dict[str(self.current_timestep)].append(generated_intention)
 			# else: 
@@ -710,7 +670,7 @@ class ProMediumLevelAgent(ProAgent):
 						self.mlam
 					)    
 
-		#print('counter_list = {}'.format(counter_list))  
+		print('counter_list = {}'.format(counter_list))  
 		lis = [] 
 		for i in counter_list:  
 			if counter_dicts[i] == ' ':  
@@ -855,6 +815,5 @@ class ProMediumLevelAgent(ProAgent):
 		return action_plan, plan_cost
 	
 class ProPlanningAgent(ProAgent):
-	def __init__(self, model="Qwen/Qwen2-VL-7B-Instruct-AWQ"):
+	def __init__(self, model="gpt-3.5-turbo-0301"):
 		super().__init__(model=model)
-
