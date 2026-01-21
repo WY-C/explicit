@@ -872,7 +872,7 @@ class ProMediumLevelAgent(ProAgent):
             return player.has_object() and player.get_object().name == obj_str
         
         elif "fill" in self.current_ml_action:
-            return player.held_object.name == 'soup'
+            return player.held_object is not None and player.held_object.name == 'soup'
         
         elif "put" in self.current_ml_action or "place" in self.current_ml_action:
             return not player.has_object()

@@ -14,8 +14,8 @@ from overcooked_ai_py.utils import load_dict_from_file, load_pickle
 
 
 from proagent.proagent import ProMediumLevelAgent
-from proagent.IRAgent import ProMediumLevelAgent as MyAgent
-from proagent.IRAgent_async import ProMediumLevelAgent as Myagent_async
+from proagent.RIPA import ProMediumLevelAgent as MyAgent
+from proagent.RIPA_async import ProMediumLevelAgent as Myagent_async
 
 from collections import defaultdict
 from stable_baselines import GAIL
