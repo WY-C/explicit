@@ -624,7 +624,6 @@ class ProMediumLevelAgent(ProAgent):
                 with self.lock:
                     if not self.is_thinking:
                         self.is_thinking = True
-                        # 메인 게임 상태가 변하므로 스냅샷(Deepcopy) 전달 필수
                         state_snapshot = copy.deepcopy(state)
                         self.think_thread = threading.Thread(target=self._correction_process, args=(state_snapshot,))
                         self.think_thread.start()
