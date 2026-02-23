@@ -1,43 +1,51 @@
 """
-todo
+=todo=
+
+본인의 계획만 출력하는 경우 있어야함.
+coordination_ring, counter_circuit, cramped_room 프롬프트 제작하기
+마지막 명령 후 3초뒤에 호출이 없으면, 새로하기
+문제: 어떤게 가까운 것인지 알 지 못하는 것 같음. : 프롬프트에서 각 object와 얼마나 거리가 있는지에 대한 정보 주기.
+-> 각 object의 위치를 주지 말고, 현재 위치에서 각 object가 얼마나 떨어져 있는지를 주기.
+벤치마크 진행하기
 =연구=
-마일스톤 (계획, 오버뷰, 청사진) 만들기
-
-파랑머리가 이야기하는 것처럼
-파랑머리: 의도, 계획
-
-이동 경로를 모두 저장했다가 보여주기
--> 이전 3개 정도만 보여주기
-프롬프트 예시 추가하기
-
-
-400ms이 fixed인지 참가자의 평균인지
-
-가장 가까운 곳이 아니라, LLM이 어떤 pot에 넣을지까지 정하기
-
-첫 스텝 답장이 온 다음에 게임 시작하기.
-
-
+    불확실성?
+=문제점=
+    LLM이 반대쪽에 ex, 초록색 구역이 아닌곳에 초록색으로 의도를 파악하는 경우가 있음.
+=궁금증=
+    proagent는 counter_circuit에서 협력하는가?
+    - 예시를 구체적으로 주어야 하는가?
 =벤치마크=
-내 환경의 ProAgent와 비교
-
+    내 환경의 ProAgent와 비교
 =논문=
-ProAgent가 문단의 첫 문장에 나올 것이 아니라, detail에 조금만 들어가야 한다.
+    ProAgent가 문단의 첫 문장에 나올 것이 아니라, detail에 조금만 들어가야 한다.
+=진행한 것들=
+    파랑머리가 이야기하는 것처럼 (✅ 렌더링 함수에 구현됨)
+    파랑머리: 의도, 계획
+    이동 경로를 모두 저장했다가 보여주기 -> 이전 3개 정도만 보여주기
+    프롬프트 예시 추가하기
 
+참고 논문 및 아이디어
+    LLM-Powered Hierarchical Language Agent for Real-time Human-AI Coordination
+        2.5Hz 기본, 3.5Hz 게임플레이 박진감. -> 유저의 평균속도에 agent가 맞춰서 행동하는 거였음.
+        100초 진행. -> 250step -> 근데 이거는 제한시간에 task를 완료하는거라서 좀 애매함.
+    가장 가까운 곳이 아니라, LLM이 어떤 pot에 넣을지까지 정하기 (✅ 방금 action(index) 파싱 및 하이라이트로 구현 완료)
+참고 논문 2
+    Leveraging Dual Process Theory in Language Agent Framework for Real-time Simultaneous Human-AI Collaboration
+        In the real-time settings, each timestep corresponds to 0.25 seconds in the real world.
+        500timestep / 250ms -> 125초
 
 수정사항들
-cook time argument -> 요리가 완료됨을 추가하는 argument + layout가서 따로 수정해주기
-
-IntentionResponsiveAgent
-
-
+    cook time argument -> 요리가 완료됨을 추가하는 argument + layout가서 따로 수정해주기
+    IntentionResponsiveAgent
 """
+
 import time
 import datetime
 import os
 import json
 from argparse import ArgumentParser
 import numpy as np
+import pygame
 
 # Rich 라이브러리 임포트
 from rich import print as rprint
@@ -50,7 +58,7 @@ from rich.progress import (
 )
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -67,7 +75,6 @@ try:
 except:
     VERSION = "0.0.1"
 
-import pygame
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 
 print(f'\n----This overcook version is {VERSION}----\n')
@@ -78,10 +85,10 @@ from overcooked_ai_py.agents.agent import AgentGroup
 from overcooked_ai_py.mdp.actions import Action
 
 from utils import NEW_LAYOUTS, OLD_LAYOUTS, make_agent
-
 from overcooked_ai_py.agents.agent import Agent
+import re
 
-# [수정됨] HumanAgent: set_next_action 구조 사용
+# [HumanAgent Class]
 class HumanAgent(Agent):
     def __init__(self):
         super().__init__()
@@ -99,283 +106,431 @@ class HumanAgent(Agent):
             return a
         return (0,0)
 
+# ======================================================================================
+# [Helper] 화면 중앙 텍스트 출력 (카운트다운용)
+# ======================================================================================
+def parse_separate_highlights(thought_text, layout_dict, num_AI=None):
+    """
+    my_player_id (int, optional): 0 또는 1. 지정할 경우, Plan이 해당 플레이어 ID인지 검증합니다.
+    """
+    highlight_for_inference_coords = []
+    highlight_for_plan_coords = []
+    
+    if not thought_text or not layout_dict:
+        return [], []
 
-def render_game_emoji(window, visualizer, env, step, horizon, reward, num_pro, thought_msg=None, is_thinking=False):
+    def _action_to_coords(act_str):
+        # (기존과 동일하여 생략)
+        if not act_str: return []
+        key_map = {
+            "pickup_onion": "onion_dispenser",
+            "pickup_dish": "dish_dispenser",
+            "put_onion_in_pot": "pot",
+            "fill_dish_with_soup": "pot",
+            "deliver_soup": "serving",
+            "place_obj_on_counter": "counter" # counter 추가 필요시
+        }
+        match = re.search(r'(\w+)\(?(\d+)?\)?', act_str) # 인자 없는 경우 대비 수정
+        if match:
+            act_name = match.group(1)
+            idx_str = match.group(2)
+            
+            # 인자가 없는 스킬(wait, place_obj 등) 처리
+            if not idx_str: 
+                return [] 
+                
+            idx = int(idx_str)
+            target_key = key_map.get(act_name)
+            
+            if target_key and target_key in layout_dict:
+                items = layout_dict[target_key]
+                if 0 <= idx < len(items):
+                    target = items[idx]
+                    if isinstance(target, dict) and 'position' in target:
+                        return [target['position']]
+                    else:
+                        return [target]
+        return []
+
+    # --- Intention (상대방) 파싱 ---
+    # 예: Intention for Player 0: "..."
+    # 숫자(\d+)를 캡처해서 파트너인지 확인 가능
+    intention_match = re.search(r'Intention.*?(?:Player (\d+))?.*:\s*"([^"]+)"', thought_text, re.IGNORECASE)
+    if intention_match:
+        # 그룹 2가 액션 문자열 (그룹 1은 플레이어 번호)
+        # 플레이어 번호 검증 로직을 넣을 수도 있음 (생략 가능)
+        action_str = intention_match.group(2)
+        highlight_for_inference_coords = _action_to_coords(action_str)
+
+    # --- Plan (나) 파싱 ---
+    # 예: Plan for Player 1: "..."
+    plan_match = re.search(r'Plan.*?(?:Player (\d+))?.*:\s*"([^"]+)"', thought_text, re.IGNORECASE)
+    if plan_match:
+        parsed_id = plan_match.group(1) # '0' 또는 '1'
+        action_str = plan_match.group(2)
+        
+        # 검증 로직: 내 ID가 주어졌는데, 텍스트의 ID와 다르면 무시하거나 경고
+        if num_AI is not None and parsed_id is not None:
+            if int(parsed_id) != num_AI:
+                print(f"Warning: Parsed plan for Player {parsed_id}, but I am Player {num_AI}.")
+                # 필요 시 return [], [] 혹은 에러 처리
+        
+        highlight_for_plan_coords = _action_to_coords(action_str)
+
+    return highlight_for_inference_coords, highlight_for_plan_coords
+
+
+#처음 시작
+def draw_centered_text(window, text, sub_text=None, color=(0, 0, 0), bg_color=(255, 255, 255)):
+    """화면 중앙에 텍스트를 그립니다."""
+    if window is None: return
+    
+    window.fill(bg_color)
+    screen_width, screen_height = window.get_size()
+    
+    # 폰트 설정 (한글 폰트 우선, 없으면 기본)
+    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
+    main_font = pygame.font.SysFont(font_name, 50, bold=True)
+    sub_font = pygame.font.SysFont(font_name, 30)
+
+    # 메인 텍스트
+    text_surf = main_font.render(text, True, color)
+    text_rect = text_surf.get_rect(center=(screen_width // 2, screen_height // 2 - 20))
+    window.blit(text_surf, text_rect)
+    
+    # 서브 텍스트 (옵션)
+    if sub_text:
+        sub_surf = sub_font.render(sub_text, True, (100, 100, 100))
+        sub_rect = sub_surf.get_rect(center=(screen_width // 2, screen_height // 2 + 40))
+        window.blit(sub_surf, sub_rect)
+        
+    pygame.display.flip()
+
+# ======================================================================================
+# [Unified Render Function] 통합 렌더링 함수
+# visual_level 1: Emoji Mode
+# visual_level 2: Natural Language Mode
+# visual_level 3: Highlight Mode
+# ======================================================================================
+def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
+                thought_msg=None,):
+
+    highlight_color_green = (80, 220, 150)
+    highlight_color_blue = (50, 120, 255)
+    highlight_color_purple = (32, 170, 210)
+    
     if not window or not visualizer:
         return
 
-    # 1. 배경 초기화
+    # 1. 배경 및 공통 설정
     window.fill((255, 255, 255)) 
     screen_width, screen_height = window.get_size()
-
-    # 2. 상단 상태 정보 (맨 위 고정)
-    font = pygame.font.SysFont("malgungothic", 30) 
-    text = font.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
+    
+    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
+    font_header = pygame.font.SysFont(font_name, 30)
+    
+    # 상단 헤더 (Step, Reward)
+    text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
     window.blit(text, (10, 10))
 
     # -----------------------------------------------------------
-    # 3. 텍스트 그리기 (먼저 배치하여 높이 계산)
+    # 2. 생각(Thought) 시각화 분기
     # -----------------------------------------------------------
-    
-    # 텍스트가 시작될 기본 Y 위치
-    current_y = 60  
-    
-    if thought_msg:
-        # 폰트 및 설정
-        bubble_font = pygame.font.SysFont("malgungothic", 28) 
-        text_color = (0, 0, 0)
-        
-        icon_size = 45    
-        line_height = 45
-        left_margin = 10  
-
-        # 아이콘 매핑
-        icon_map = {
-            "fill_dish_with_soup": "soup-onion-cooked",
-            "wait": "stay",
-            "deliver_soup": "EAST-soup-onion",
-            "onion": "onions", "양파": "onions",
-            "dish": "dishes", "접시": "dishes",
-            "pot": "pot", "냄비": "pot",
-            "soup": "soup", "수프": "soup"
-        }
-
-        def chef_frame_name(d, obj): return f"{d}-{obj}" if obj else d
-        def hat_frame_name(d, color): return f"{d}-{color}hat"
-
-        # [Step 1] 셰프 아이콘 및 콜론(:) 그리기
-        chef_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
-        visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), chef_frame_name("SOUTH", None))
-        if num_pro == 0:
-            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", "blue"))
-        else:
-            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", "green"))
-        
-        
-        scaled_chef = pygame.transform.scale(chef_surf, (icon_size, icon_size))
-        window.blit(scaled_chef, (left_margin, current_y)) 
-        
-        colon_surf = bubble_font.render(" : ", True, text_color)
-        colon_x = left_margin + icon_size 
-        colon_y_colon = current_y + (line_height - colon_surf.get_height()) // 2
-        window.blit(colon_surf, (colon_x, colon_y_colon))
-
-        text_start_x = colon_x + colon_surf.get_width()
-
-        # [Step 2] 텍스트 파싱 및 줄별 그리기
-        raw_lines = thought_msg.split('\n')
-        
-        for line in raw_lines:
-            line = line.strip()
-            if not line: continue 
-
-            display_text = ""
-            if "Intention" in line: display_text = "You want"
-            elif "Plan" in line: display_text = "I will do"
-            else: continue 
-
-            line_lower = line.lower()
-            sprite_name = None
-            for key, s_name in icon_map.items():
-                if key in line_lower:
-                    sprite_name = s_name
-                    break 
-
-            current_x = text_start_x
-            text_surf = bubble_font.render(display_text, True, text_color)
-            text_y_pos = current_y + (line_height - text_surf.get_height()) // 2
-            window.blit(text_surf, (current_x, text_y_pos))
-            
-            current_x += text_surf.get_width() + 10 
-
-            if sprite_name:
-                # 1. 그릴 표면 생성 및 검은색 배경 채우기 (이전 요청사항 반영)
-                obj_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
-                #obj_surf.fill((0, 0, 0)) # 검은 배경
-                
-                # ---------------------------------------------------------
-                # [수정됨] 'stay'인 경우 JSON 조회 대신 파일 직접 로드
-                # ---------------------------------------------------------
-                if sprite_name == 'stay':
-                    try:
-                        # 같은 경로에 있는 'stay.png' 불러오기
-                        raw_img = pygame.image.load('stay.png').convert_alpha()
-                        
-                        # 불러온 이미지를 타일 크기(UNSCALED_TILE_SIZE)에 맞게 조정
-                        # (원본 이미지 크기가 타일 크기와 다를 수 있으므로 안전장치)
-                        resized_img = pygame.transform.scale(raw_img, (visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE))
-                        
-                        # 검은 배경 위에 그리기
-                        obj_surf.blit(resized_img, (0, 0))
-                    except FileNotFoundError:
-                        print("Error: 'stay.png' file not found.")
-                
-                # 'stay'가 아닌 경우 기존 로직 수행 (JSON 사용)
-                else:
-                    try: visualizer.TERRAINS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
-                    except KeyError:
-                        try: visualizer.OBJECTS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
-                        except KeyError:
-                            try: visualizer.CHEFS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
-                            except: pass
-
-                # 화면에 최종 출력 (아이콘 크기로 조정)
-                scaled_obj = pygame.transform.scale(obj_surf, (icon_size, icon_size))
-                window.blit(scaled_obj, (current_x, current_y + (line_height - icon_size)//2))
-
-            # 줄바꿈: Y 위치 증가
-            current_y += line_height
-
-    # -----------------------------------------------------------
-    # 4. 게임 화면 그리기 (텍스트 바로 아래에 배치)
-    # -----------------------------------------------------------
-    
-    # [핵심] 텍스트가 끝난 위치(current_y)에 약간의 여백(20)을 두고 맵을 그립니다.
-    # 만약 텍스트가 없으면 current_y는 초기값 60이므로 상단에 그려집니다.
-    #print("current_y: ", current_y)
-    map_start_y = 170
-
-    state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
-    surf_width, surf_height = state_surface.get_size()
-    
-    start_x = (screen_width - surf_width) // 2
-    
-    window.blit(state_surface, (start_x, map_start_y))
-
-    pygame.display.flip()
-
-def render_game_NL(window, visualizer, env, step, horizon, reward, num_pro, thought_msg=None, is_thinking=False):
-    """
-    자연어 텍스트 앞에 셰프 아이콘을 표시하여 
-    셰프가 말하는 것처럼 연출하는 함수
-    """
-    if not window or not visualizer:
-        return
-
-    # 1. 화면 초기화
-    window.fill((255, 255, 255))
-    screen_width, screen_height = window.get_size()
-
-    # 폰트 및 설정
-    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
-    font_header = pygame.font.SysFont(font_name, 30)
-    font_text = pygame.font.SysFont(font_name, 24)
-    
-    icon_size = 45    # 아이콘 크기
-    line_height = 40  # 줄 간격
-    left_margin = 10  # 왼쪽 여백
-    current_y = 60    # 텍스트/아이콘 시작 Y 위치
-
-    # -----------------------------------------------------------
-    # 2. 상단 정보 (Step, Reward)
-    # -----------------------------------------------------------
-    header_text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
-    window.blit(header_text, (10, 10))
-
-    # -----------------------------------------------------------
-    # 3. 셰프 아이콘 + 자연어 대화창 그리기
-    # -----------------------------------------------------------
-    if thought_msg:
-        # --- [A] 셰프 이미지 생성 (render_game_emoji에서 가져옴) ---
-        def chef_frame_name(d, obj): return f"{d}-{obj}" if obj else d
-        def hat_frame_name(d, color): return f"{d}-{color}hat"
-
-        # 투명 배경의 서피스 생성
-        chef_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
-        
-        # 1. 셰프 몸통 그리기
-        visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), chef_frame_name("SOUTH", None))
-        
-        # 2. 모자 그리기 (Player 0: 파랑 / Player 1: 초록)
-        # num_pro가 0이면 Blue, 아니면 Green (필요에 따라 반대로 설정 가능)
-        if num_pro == 0:
-            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", "blue"))
-        else:
-            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", "green"))
-        
-        # 3. 크기 조절 후 화면에 배치
-        scaled_chef = pygame.transform.scale(chef_surf, (icon_size, icon_size))
-        window.blit(scaled_chef, (left_margin, current_y))
-        
-        # 4. 콜론 " : " 그리기
-        colon_surf = font_header.render(" : ", True, (0, 0, 0))
-        colon_x = left_margin + icon_size
-        colon_y = current_y + (icon_size - colon_surf.get_height()) // 2
-        window.blit(colon_surf, (colon_x, colon_y))
-        
-        # 텍스트 시작 X 좌표 (아이콘 + 콜론 뒤)
-        text_start_x = colon_x + colon_surf.get_width()
-
-        # --- [B] 자연어 텍스트 출력 ---
-        
-        # 텍스트 다듬기 (필요한 부분만 자르기)
-        if "Intention for Player" in thought_msg:
-            thought_msg = thought_msg[thought_msg.find("Intention for Player"):]
-            thought_msg = thought_msg.replace("Intention for Player 1", "Intention for Partner")
-        if "Plan for Player 0" in thought_msg:
-            thought_msg = thought_msg.replace("Plan for Player 0", "\nPlan for Me")
-
-        lines = thought_msg.split('\n')
-        
-        # 첫 번째 줄은 아이콘 높이에 맞춰 출력
-        # 그 다음 줄부터는 아이콘 아래쪽으로 줄바꿈
-        text_y_pos = current_y + (icon_size - font_text.get_height()) // 2 # 수직 중앙 정렬
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line: continue
-            
-            text_surf = font_text.render(line, True, (0, 0, 0))
-            
-            # 첫 줄은 아이콘 옆에, 그 다음 줄부터는 들여쓰기 맞춰서 출력
-            draw_x = text_start_x if i == 0 else text_start_x 
-            # (만약 두번째 줄부터 아이콘 밑으로 보내고 싶으면 draw_x = left_margin 으로 변경)
-            
-            window.blit(text_surf, (draw_x, text_y_pos))
-            
-            # 다음 줄로 이동
-            text_y_pos += line_height
-            
-        # 텍스트가 끝난 최종 Y 위치 업데이트 (맵 그릴 위치 계산용)
-        current_y = text_y_pos
-
-    # -----------------------------------------------------------
-    # 4. 게임 맵(State) 그리기
-    # -----------------------------------------------------------
-    # 텍스트와 겹치지 않게 아래쪽에 배치 (최소 Y값 170 보장)
+    current_y = 60  # 텍스트/아이콘 시작 Y 위치
+    left_margin = 10
     map_start_y = max(current_y + 20, 170)
-
+    
     state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
     surf_width, surf_height = state_surface.get_size()
     
     start_x = (screen_width - surf_width) // 2
-    
     window.blit(state_surface, (start_x, map_start_y))
+    if thought_msg:
+        # 공통 헬퍼 함수
+        def chef_frame_name(d, obj): return f"{d}-{obj}" if obj else d
+        def hat_frame_name(d, color): return f"{d}-{color}hat"
 
-    # -----------------------------------------------------------
-    # 5. 생각 중 (Thinking) 표시
-    # -----------------------------------------------------------
-    if is_thinking:
-        loading_font = pygame.font.SysFont(font_name, 40, bold=True)
-        loading_text = loading_font.render("Agent is thinking...", True, (255, 0, 0))
-        
-        text_rect = loading_text.get_rect(center=(screen_width // 2, 80))
-        bg_rect = text_rect.inflate(20, 10)
-        
-        pygame.draw.rect(window, (255, 255, 255), bg_rect)
-        pygame.draw.rect(window, (0, 0, 0), bg_rect, 2)
-        window.blit(loading_text, text_rect)
+        # --- [Visual Level 1: Emoji Mode] ---
+        if visual_level == 1:
+            bubble_font = pygame.font.SysFont(font_name, 28) 
+            text_color = (0, 0, 0)
+            icon_size = 45    
+            line_height = 45
+
+            icon_map = {
+                "fill_dish_with_soup": "soup-onion-cooked",
+                "wait": "stay",
+                "deliver_soup": "EAST-soup-onion",
+                "onion": "onions", "양파": "onions",
+                "dish": "dishes", "접시": "dishes",
+                "pot": "pot", "냄비": "pot",
+                "soup": "soup", "수프": "soup"
+            }
+
+            # (1) 셰프 아이콘 그리기
+            chef_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
+            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), chef_frame_name("SOUTH", None))
+            hat_color = "blue" if num_AI == 0 else "green"
+            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", hat_color))
+            
+            scaled_chef = pygame.transform.scale(chef_surf, (icon_size, icon_size))
+            window.blit(scaled_chef, (left_margin, current_y)) 
+            
+            # (2) 콜론 그리기
+            colon_surf = bubble_font.render(" : ", True, text_color)
+            colon_x = left_margin + icon_size 
+            colon_y_colon = current_y + (line_height - colon_surf.get_height()) // 2
+            window.blit(colon_surf, (colon_x, colon_y_colon))
+            text_start_x = colon_x + colon_surf.get_width()
+
+            # (3) 텍스트 파싱 및 아이콘 매핑
+            raw_lines = thought_msg.split('\n')
+            for line in raw_lines:
+                line = line.strip()
+                if not line: continue 
+
+                display_text = ""
+                if "Intention" in line: display_text = "You want"
+                elif "Plan" in line: display_text = "I will do"
+                else: continue 
+
+                # 키워드 매칭
+                line_lower = line.lower()
+                sprite_name = None
+                for key, s_name in icon_map.items():
+                    if key in line_lower:
+                        sprite_name = s_name
+                        break 
+
+                # 텍스트 출력
+                current_x = text_start_x
+                text_surf = bubble_font.render(display_text, True, text_color)
+                text_y_pos = current_y + (line_height - text_surf.get_height()) // 2
+                window.blit(text_surf, (current_x, text_y_pos))
+                current_x += text_surf.get_width() + 10 
+
+                # 아이콘 출력
+                if sprite_name:
+                    obj_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
+                    
+                    if sprite_name == 'stay':
+                        try:
+                            raw_img = pygame.image.load('stay.png').convert_alpha()
+                            resized_img = pygame.transform.scale(raw_img, (visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE))
+                            obj_surf.blit(resized_img, (0, 0))
+                        except FileNotFoundError: pass
+                    else:
+                        try: visualizer.TERRAINS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
+                        except KeyError:
+                            try: visualizer.OBJECTS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
+                            except KeyError:
+                                try: visualizer.CHEFS_IMG.blit_on_surface(obj_surf, (0, 0), sprite_name)
+                                except: pass
+
+                    scaled_obj = pygame.transform.scale(obj_surf, (icon_size, icon_size))
+                    window.blit(scaled_obj, (current_x, current_y + (line_height - icon_size)//2))
+
+                current_y += line_height
+
+        # --- [Visual Level 2: Natural Language Mode] ---
+        elif visual_level == 2:
+            font_text = pygame.font.SysFont(font_name, 24)
+            icon_size = 45    
+            line_height = 40  
+            
+            # (1) 셰프 아이콘 그리기
+            chef_surf = pygame.Surface((visualizer.UNSCALED_TILE_SIZE, visualizer.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
+            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), chef_frame_name("SOUTH", None))
+            hat_color = "blue" if num_AI == 0 else "green"
+            visualizer.CHEFS_IMG.blit_on_surface(chef_surf, (0, 0), hat_frame_name("SOUTH", hat_color))
+            
+            scaled_chef = pygame.transform.scale(chef_surf, (icon_size, icon_size))
+            window.blit(scaled_chef, (left_margin, current_y))
+            
+            # (2) 콜론 그리기
+            colon_surf = font_header.render(" : ", True, (0, 0, 0))
+            colon_x = left_margin + icon_size
+            colon_y_colon = current_y + (icon_size - colon_surf.get_height()) // 2
+            window.blit(colon_surf, (colon_x, colon_y_colon))
+            text_start_x = colon_x + colon_surf.get_width()
+
+            # (3) 텍스트 정제 및 출력
+            if "Intention for Player" in thought_msg:
+                thought_msg = thought_msg[thought_msg.find("Intention for Player"):]
+                thought_msg = thought_msg.replace("Intention for Player 1", "Intention for Partner")
+            if "Plan for Player 0" in thought_msg:
+                thought_msg = thought_msg.replace("Plan for Player 0", "\nPlan for Me")
+
+            lines = thought_msg.split('\n')
+            text_y_pos = current_y + (icon_size - font_text.get_height()) // 2 # 수직 중앙 정렬
+            
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if not line: continue
+                
+                text_surf = font_text.render(line, True, (0, 0, 0))
+                draw_x = text_start_x
+                window.blit(text_surf, (draw_x, text_y_pos))
+                text_y_pos += line_height
+            
+            current_y = text_y_pos
+        elif visual_level == 3:
+            highlight_for_inference_coords, highlight_for_plan_coords = parse_separate_highlights(thought_msg, layout_dict, num_AI=num_AI)
+
+            # 1. 타일 하나의 픽셀 크기 계산
+            grid_width = len(env.mdp.terrain_mtx[0])
+            grid_height = len(env.mdp.terrain_mtx)
+
+            if grid_width > 0 and grid_height > 0:
+                tile_w = surf_width / grid_width
+                tile_h = surf_height / grid_height
+
+    
+                if num_AI == 0:
+                    inf_color = highlight_color_green  
+                    plan_color = highlight_color_blue 
+                else:
+                    inf_color = highlight_color_blue  
+                    plan_color = highlight_color_green  
+
+                # 4. 그리기 작업을 리스트로 묶어서 처리
+                # (좌표 리스트, 해당 색상) 쌍을 만들어 순회합니다.
+                draw_tasks = [
+                    (highlight_for_inference_coords, inf_color),
+                    (highlight_for_plan_coords, plan_color)
+                ]
+
+                for coords_list, color in draw_tasks:
+                    # 좌표 리스트가 비어있으면 스킵
+                    if not coords_list:
+                        continue
+
+                    # 해당 색상의 반투명 서피스 생성
+                    s = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
+                    s.fill((*color, 100)) # Alpha=100 (반투명)
+
+                    for (hx, hy) in coords_list:
+                        # 좌표 유효성 검사
+                        if 0 <= hx < grid_width and 0 <= hy < grid_height:
+                            draw_x = start_x + (hx * tile_w)
+                            draw_y = map_start_y + (hy * tile_h)
+                            
+                            # 1) 반투명 색칠하기
+                            window.blit(s, (draw_x, draw_y))
+                            
+                            # 2) 진한 테두리 그리기
+                            rect = pygame.Rect(draw_x, draw_y, tile_w, tile_h)
+                            pygame.draw.rect(window, color, rect, 3) # 두께 3
+            else:
+                if highlight_for_inference_coords:
+                    # 1. 타일 하나의 픽셀 크기 계산 (전체 이미지 너비 / 그리드 가로 칸 수)
+                    grid_width = len(env.mdp.terrain_mtx[0])
+                    grid_height = len(env.mdp.terrain_mtx)
+                    
+                    if grid_width > 0 and grid_height > 0:
+                        tile_w = surf_width / grid_width
+                        tile_h = surf_height / grid_height
+
+                        # 2. 하이라이트 전용 서피스 생성 (반투명 지원)
+                        # 타일 크기만큼의 투명 종이를 만듭니다.
+                        s = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
+                        
+                        # 색상 채우기 (R, G, B, Alpha) -> Alpha=100 (0~255, 숫자가 클수록 불투명)
+                        s.fill((*highlight_color_green, 100))
+
+                        for (hx, hy) in highlight_for_inference_coords:
+                            # 좌표 유효성 검사 (맵 밖으로 나가는 것 방지)
+                            if 0 <= hx < grid_width and 0 <= hy < grid_height:
+                                # 그릴 위치 계산
+                                draw_x = start_x + (hx * tile_w)
+                                draw_y = map_start_y + (hy * tile_h)
+                                
+                                # 1) 반투명 색칠하기
+                                window.blit(s, (draw_x, draw_y))
+                                
+                                # 2) 진한 테두리 그리기 (선택 사항)
+                                rect = pygame.Rect(draw_x, draw_y, tile_w, tile_h)
+                                pygame.draw.rect(window, highlight_color_green, rect, 3) # 두께 3
+
+                if highlight_for_plan_coords:
+                    # 1. 타일 하나의 픽셀 크기 계산 (전체 이미지 너비 / 그리드 가로 칸 수)
+                    grid_width = len(env.mdp.terrain_mtx[0])
+                    grid_height = len(env.mdp.terrain_mtx)
+                    
+                    if grid_width > 0 and grid_height > 0:
+                        tile_w = surf_width / grid_width
+                        tile_h = surf_height / grid_height
+
+                        # 2. 하이라이트 전용 서피스 생성 (반투명 지원)
+                        # 타일 크기만큼의 투명 종이를 만듭니다.
+                        s = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
+                        
+                        # 색상 채우기 (R, G, B, Alpha) -> Alpha=100 (0~255, 숫자가 클수록 불투명)
+                        s.fill((*highlight_color_blue, 100)) 
+
+                        for (hx, hy) in highlight_for_plan_coords:
+                            # 좌표 유효성 검사 (맵 밖으로 나가는 것 방지)
+                            if 0 <= hx < grid_width and 0 <= hy < grid_height:
+                                # 그릴 위치 계산
+                                draw_x = start_x + (hx * tile_w)
+                                draw_y = map_start_y + (hy * tile_h)
+                                
+                                # 1) 반투명 색칠하기
+                                window.blit(s, (draw_x, draw_y))
+                                
+                                # 2) 진한 테두리 그리기 (선택 사항)
+                                rect = pygame.Rect(draw_x, draw_y, tile_w, tile_h)
+                                pygame.draw.rect(window, highlight_color_blue, rect, 3) # 두께 3
 
     pygame.display.flip()
 
+
+def generate_layout_dict(mdp):
+    """
+    레이아웃 정보를 문자열 대신 구조화된 딕셔너리로 반환합니다.
+    """
+    layout_data = {}
+
+    # 출력할 이름 정의
+    name_map = {
+        "onion_dispenser": "Onion Dispenser",
+        "dish_dispenser": "Dish Dispenser",
+        "tomato_dispenser": "Tomato Dispenser",
+        "serving": "Serving Loc",
+        "pot": "Pot"
+    }
+
+    # 각 객체 타입별 순회
+    for key, readable_name in name_map.items():
+        # MDP에서 위치 정보 가져오기
+        locations = getattr(mdp, f"get_{key}_locations")()
+        
+        # 해당 객체가 맵에 없으면 건너뜀
+        if not locations:
+            continue
+            
+        # 해당 타입의 리스트 초기화
+        layout_data[key] = []
+
+        for i, pos in enumerate(locations):
+            # 딕셔너리 형태로 정보 저장
+            item_info = {
+                "id": i,
+                "type": readable_name,            # 예: Onion Dispenser
+                "full_name": f"<{readable_name} {i}>", # 예: <Onion Dispenser 0>
+                "position": pos                   # 예: (0, 1)
+            }
+            layout_data[key].append(item_info)
+
+    return layout_data
 
 def main(variant):
-    #step_duration = 500
+
     layout = variant['layout']
     horizon = variant['horizon']
     episode = variant['episode']
     mode = variant['mode']
-    render = variant['render'] # 렌더링 여부 확인
+    render = variant['render'] 
     cook_time = variant['cook_time']
     visual_level = variant['visual_level']
     
@@ -384,6 +539,8 @@ def main(variant):
     elif VERSION == '0.0.1':
         mdp = OvercookedGridworld.from_layout_name(OLD_LAYOUTS[layout])
 
+    layout_dict = generate_layout_dict(mdp)
+    #print("layout_dict :",layout_dict)
     env = OvercookedEnv(mdp, horizon=horizon)
     env.reset()
     
@@ -394,7 +551,7 @@ def main(variant):
         pygame.init()
         visualizer = StateVisualizer(cook_time = cook_time)
         window_surface = pygame.display.set_mode((900, 600)) 
-        pygame.display.set_caption("ProAgent vs Human")
+        pygame.display.set_caption("overcookedAI")
     
     p0_algo = variant['p0']
     p1_algo = variant['p1']
@@ -405,13 +562,13 @@ def main(variant):
 
     # [Rich Progress Bar 설정]
     with Progress(
-        SpinnerColumn(),        # 로딩 스피너
-        TextColumn("[progress.description]{task.description}"), # 설명 텍스트
-        BarColumn(),            # 진행 바
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), # 퍼센트
-        TimeRemainingColumn(),  # 남은 시간
-        TextColumn(" | Mean Reward: [bold cyan]{task.fields[mean_score]}"), # 커스텀 필드 (평균 점수)
-        transient=False         # 완료 후에도 바를 사라지게 하지 않음
+        SpinnerColumn(),        
+        TextColumn("[progress.description]{task.description}"), 
+        BarColumn(),            
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), 
+        TimeRemainingColumn(),  
+        TextColumn(" | Mean Reward: [bold cyan]{task.fields[mean_score]}"), 
+        transient=False         
     ) as progress:
         
         task_id = progress.add_task(f"[green]Simulating {episode} Episodes...", total=episode, mean_score="0")
@@ -421,7 +578,7 @@ def main(variant):
         for i in range(episode):  
             agents_list = []
             for alg in [p0_algo, p1_algo]:
-                if alg == "ProAgent" or alg == "MyAgent" or alg == "MyAgentAsync":
+                if alg == "ProAgent" or alg == "EIRA" or alg == "EIRAAsync":
                     gpt_model = variant['gpt_model']
                     retrival_method = variant['retrival_method']
                     K = variant['K']
@@ -434,38 +591,66 @@ def main(variant):
                 elif alg == "Human":
                     agent = HumanAgent()
                 elif alg == "BC":
-                    agent = make_agent(alg, mdp, layout, seed_id=i) # 매 에피소드마다 시드 변경
+                    agent = make_agent(alg, mdp, layout, seed_id=i) 
                 else:
                     agent = make_agent(alg, mdp, layout)
                 agents_list.append(agent)
+            
             print("agents_list: ", *agents_list)
             team = AgentGroup(*agents_list)
             team.reset()
             env.reset()
             r_total = 0
 
+            # =================================================================================
+            # [WarmUp] 1. LLM 웜업 (Warm-up) & 첫 응답 대기 로직
+            # =================================================================================
+            if render and mode == 'exp':
+                pro_agent_found = False
+                for idx, agent in enumerate(agents_list):
+                    # ProAgent 혹은 MyAgentAsync 등 LLM을 사용하는 에이전트인지 확인
+                    if hasattr(agent, 'generate_ml_action'):
+                        pro_agent_found = True
+                        draw_centered_text(window_surface, 
+                                           "Initializing AI Agent...", 
+                                           "Waiting for the first thought...", 
+                                           color=(0, 0, 255))
+                        
+                        print(f"\n[WarmUp] Triggering LLM for Agent {idx}...")
+                        
+                        # generate_ml_action 호출 (강제 생각)
+                        _ = agent.generate_ml_action(env.state)
+                        
+                        print(f"[WarmUp] LLM Response Received!")
+                
+                # ProAgent가 있어서 응답을 받았으면 카운트다운 시작
+                if pro_agent_found:
+                    for count in range(3, 0, -1):
+                        draw_centered_text(window_surface, 
+                                           f"Game Starts in {count}...", 
+                                           "AI is Ready!",
+                                           color=(255, 0, 0))
+                        time.sleep(1)
+            # =================================================================================
+
             clock = pygame.time.Clock()
             if mode == 'exp':
                 if (variant['p0'] == 'Human') or (variant['p1'] == 'Human'):
                     has_proagent = 1
-                    if variant['p0'] == 'Human':
-                        num_human = 0
-                    else:
-                        num_human = 1
-                    if variant['p0'] == 'ProAgent' or variant['p0'] == 'MyAgent' or variant['p0'] == 'MyAgentAsync':
-                        num_pro = 0
-                    elif variant['p1'] == 'ProAgent'or variant['p1'] == 'MyAgent' or variant['p1'] == 'MyAgentAsync':
-                        num_pro = 1
+                    if variant['p0'] == 'Human': num_human = 0
+                    else: num_human = 1
+
+                    if variant['p0'] in ['ProAgent', 'EIRA', 'EIRAAsync']: num_AI = 0
+                    elif variant['p1'] in ['ProAgent', 'EIRA', 'EIRAAsync']: num_AI = 1
                     else:
                         has_proagent = 0
+                        num_AI = -1
                     
-                    for t in range(horizon):
+                    for t in range(1, horizon+1):
                         # 1. 스텝 시작 시간 및 변수 초기화
                         step_start_time = pygame.time.get_ticks()
                         step_duration = 400  # 400ms 고정
                         
-                        # [중요] event.clear() 제거! (입력 씹힘 방지)
-                        # 대신, 이번 턴에 행동을 정했는지 확인하는 플래그 사용
                         action_chosen = False 
                         chosen_action = (0, 0) # 기본값: 정지(Stay)
 
@@ -473,41 +658,29 @@ def main(variant):
                         first = True
                         if render and first:
                             first = False
+                            current_thought = "No ProAgent"
                             if has_proagent == 1:
-                                current_thought = agents_list[num_pro].current_thought 
-                            else:
-                                current_thought = "No ProAgent"
-                            if visual_level == 0:
-                                render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
-                            elif visual_level == 1:
-                                render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
-                        
-                            else:
-                                render_game_NL(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
-                        
-
+                                current_thought = agents_list[num_AI].current_thought 
                             
-                        # 3. [핵심] 400ms가 지날 때까지 무조건 루프를 돕니다.
-                        # 입력을 빨리 했어도 여기서 시간을 떼웁니다 (Non-blocking Wait).
+                            # 통합 렌더링 함수 호출
+                            render_game(window=window_surface, visualizer=visualizer, env=env, step=t, horizon=horizon, reward=r_total, num_AI=num_AI,
+                                        visual_level=visual_level, layout_dict=layout_dict, thought_msg=current_thought)
+
+                        # 3. 400ms 대기 루프 (입력 처리 포함)
                         while True:
-                            # 60FPS 유지
-                            #todo: 입력 버퍼 비우기
-                            clock.tick(100)
+                            clock.tick(60)
                             
                             current_time = pygame.time.get_ticks()
                             elapsed = current_time - step_start_time
 
-                            # 400ms가 지나면 루프 탈출 -> 다음 스텝 진행
                             if elapsed >= step_duration:
                                 break
 
-                            # 이벤트 처리
                             for event in pygame.event.get():
                                 if event.type == pygame.QUIT:
                                     pygame.quit()
                                     return
                                 
-                                # 키 입력 처리 (이미 이번 턴에 행동을 결정했다면 무시)
                                 if event.type == pygame.KEYDOWN and not action_chosen:
                                     key = event.key
                                     action = None
@@ -520,28 +693,22 @@ def main(variant):
                                     if action is not None:
                                         chosen_action = action
                                         action_chosen = True 
-                                        # [중요] break 하지 않음! 
-                                        # 행동은 입력받았지만, 시간(400ms)은 다 채우고 나갑니다.
                         
-                        # 4. 루프가 끝나면(400ms 경과) 결정된 행동을 에이전트에 주입
-                        # 입력이 없었으면 기본값 (0,0)이 들어감
+                        # 4. 행동 주입 및 환경 업데이트
                         agents_list[num_human].set_next_action(chosen_action)
 
-                        # 5. 환경 업데이트 (Step)
                         s_t = env.state
                         a_t = []
                         a_t.append(team.agents[0].action(s_t))
                         
+                        # 렌더링 업데이트 (생각 중 표시 가능)
                         if render:
+                            current_thought = "No ProAgent"
                             if has_proagent == 1:
-                                current_thought = agents_list[num_pro].current_thought
-                            if visual_level == 0:
-                                render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=True)
-                            elif visual_level == 1:
-                                render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=True)
-                        
-                            else:
-                                render_game_NL(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=True)
+                                current_thought = agents_list[num_AI].current_thought
+                            
+                            render_game(window=window_surface, visualizer=visualizer, env=env, step=t, horizon=horizon, reward=r_total, num_AI=num_AI,
+                                        visual_level=visual_level, layout_dict=layout_dict, thought_msg=current_thought)
                             pygame.event.pump()
 
                         a_t.append(team.agents[1].action(s_t))
@@ -549,57 +716,34 @@ def main(variant):
                         
                         obs, reward, done, env_info = env.step(a_t)
                         r_total += reward
-                        if visual_level == 0:
-                            render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
-                        elif visual_level == 1:
-                            render_game_emoji(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
-                    
-                        else:
-                            render_game_NL(window_surface, visualizer, env, t, horizon, r_total, num_pro, current_thought, is_thinking=False)
                         
-                        # [삭제] 마지막의 pygame.time.wait()는 이제 필요 없습니다.
-                        # 위쪽의 while 루프가 정확히 시간을 맞춰줍니다.
+                        # 스텝 완료 후 렌더링 (Thinking 꺼짐)
+                        if render:
+                            render_game(window=window_surface, visualizer=visualizer, env=env, step=t, horizon=horizon, reward=r_total, num_AI=num_AI,
+                                        visual_level=visual_level, layout_dict=layout_dict, thought_msg=current_thought)
                         
                         if done: break
                 else:
-                    
+                    # AI vs AI (or other modes)
                     for t in range(horizon):
                         clock.tick(3)
-                        # [렌더링 로직] render=True일 때만 실행
                         if render:
-                            state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
-                            
-                            screen_width, screen_height = window_surface.get_size()
-                            surf_width, surf_height = state_surface.get_size()
-                            start_x = (screen_width - surf_width) // 2
-                            start_y = (screen_height - surf_height) // 2
-                            
-                            window_surface.fill((255, 255, 255)) 
-                            window_surface.blit(state_surface, (start_x, start_y))
-                            
-                            font = pygame.font.SysFont(None, 36)
-                            text = font.render(f"Step: {t}/{horizon} | Reward: {r_total}", True, (0, 0, 0))
-                            window_surface.blit(text, (10, 10))        
+                            # AI 모드에서는 간단히 맵만 렌더링 (visual_level 0 효과)
+                            render_game(window=window_surface, visualizer=visualizer, env=env, step=t, horizon=horizon, reward=r_total, num_pro=num_AI,
+                                        visual_level=visual_level, layout_dict=layout_dict, thought_msg=current_thought)
                     
                         s_t = env.state
-                        
-                        # 에이전트 행동 결정
                         a_t = team.joint_action(s_t)
-
-                        #print("a_t:", a_t)
                         obs, reward, done, env_info = env.step(a_t)
-                        pygame.display.flip()
-                        pygame.event.pump() 
                         r_total += reward
+                        
+                        pygame.event.pump() 
 
             elif mode == 'demo':
                 pass
             
-            # 결과 저장 및 진행 바 업데이트
             results.append(r_total)
             current_mean = int(np.mean(results))
-            
-            # 진행 바 한 칸 전진 및 평균 점수 텍스트 갱신
             progress.update(task_id, advance=1, mean_score=str(current_mean))
 
     # 전체 루프 종료 후
@@ -613,15 +757,12 @@ def main(variant):
         "std_result": float(np.std(results))
     }
     
-    # 결과 요약 출력
     for (k,v) in result_dict.items():
         if k != "raw_results":
             print(f'{k}: {v}')
 
-    # 파일 저장
     if variant['save']:
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
         if variant['log_dir'] == None:
             log_dir = f"experiments/{timestamp}_{layout}_{horizon}_{p0_algo}_{p1_algo}_{episode}numep"
             if not os.path.exists(log_dir):
@@ -652,7 +793,7 @@ if __name__ == '__main__':
     parser.add_argument('--cook_time', type=int, default=20)
     parser.add_argument('--episode', type=int, default=1, help='Number of episodes')
     parser.add_argument('--render', type=boolean_argument, default=True, help='Visualization on/off')
-    parser.add_argument('--visual_level', type=int, default=0, help='0: no vis, 1: emoji vis, 2: NL vis')
+    parser.add_argument('--visual_level', type=int, default=0, help='0: map only, 1: emoji vis, 2: NL vis')
 
     # ProAgent Parsers
     parser.add_argument('--gpt_model', type=str, default='Qwen/Qwen3-VL-8B-Instruct', help='Model name')
@@ -668,8 +809,6 @@ if __name__ == '__main__':
     parser.add_argument('--save', type=boolean_argument, default=True)
     parser.add_argument('--log_dir', type=str, default=None)
     parser.add_argument('--debug', type=boolean_argument, default=True)
-
-    
 
     args = parser.parse_args()
     variant = vars(args)

@@ -932,6 +932,8 @@ class MediumLevelActionManager(object):
                 possible_motion_goals.append(motion_goal)
         return possible_motion_goals
 
+
+
 class MediumLevelPlanner(object):
     """
     A planner that computes optimal plans for two agents to deliver a certain number of dishes 

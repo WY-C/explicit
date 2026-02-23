@@ -112,7 +112,7 @@ class Module(object):
                         prompt=prompt,
                         stop=stop,
                         temperature= 0.1, 
-                        max_tokens = 256
+                        max_tokens = 512
                     )
                     #time.sleep(1) # 로컬 속도에 맞춰 조절
                 
@@ -122,8 +122,8 @@ class Module(object):
                         model=self.model,
                         messages=messages,
                         stop=stop,
-                        temperature=temperature, 
-                        max_tokens = 256
+                        temperature=0.0, 
+                        max_tokens = 512
                     )
                     #time.sleep(1) 
                 
@@ -133,7 +133,7 @@ class Module(object):
                 retry_count += 1
                 rprint(f"[red][OPENAI ERROR][/red]: {e}")
                 rprint(f"[yellow]Check URL:[/yellow] {openai.api_base}") # 디버깅용 출력 추가
-                time.sleep(5)  
+                #time.sleep(5)  
         return self.parse_response(response)
 
     def parse_response(self, response):

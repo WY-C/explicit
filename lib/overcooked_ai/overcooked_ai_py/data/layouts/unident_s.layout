@@ -1,8 +1,8 @@
 {
     "grid":  """XXXXXXXXX
-                O XSXOX S
-                X   P 1 X
-                X2  P   X
+                O2XSXOX1S
+                X   P   X
+                X   P   X
                 XXXDXDXXX""",
     "start_order_list": None,
     "cook_time": 20,

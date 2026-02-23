@@ -13,9 +13,9 @@ from overcooked_ai_py.utils import load_dict_from_file, load_pickle
 
 
 
-from proagent.proagent import ProMediumLevelAgent
-from proagent.RIPA import ProMediumLevelAgent as MyAgent
-from proagent.RIPA_async import ProMediumLevelAgent as Myagent_async
+from EIRA.proagent import ProMediumLevelAgent
+from EIRA.EIRA import ProMediumLevelAgent as MyAgent
+from EIRA.EIRA_async import ProMediumLevelAgent as Myagent_async
 
 from collections import defaultdict
 from stable_baselines import GAIL
@@ -54,7 +54,7 @@ def make_agent(alg:str, mdp, layout, **gptargs):
         print(f'using seed = {run_dir}')
         agent, config = get_bc_agent_from_saved(run_dir)
 
-    elif alg == "ProAgent" or alg == "Greedy" or alg == "MyAgent" or alg == "MyAgentAsync":
+    elif alg == "ProAgent" or alg == "Greedy" or alg == "EIRA" or alg == "EIRAAsync":
         MLAM_PARAMS = {
             "start_orientations": False,
             "wait_allowed": True,
@@ -73,11 +73,11 @@ def make_agent(alg:str, mdp, layout, **gptargs):
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
             agent = ProMediumLevelAgent(mlam, layout, **gptargs)
         
-        elif alg == "MyAgentAsync":
+        elif alg == "EIRAAsync":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
             agent = Myagent_async(mlam, layout, **gptargs)
         
-        elif alg == "MyAgent":
+        elif alg == "EIRA":
             mlam = MediumLevelPlanner.from_pickle_or_compute(mdp, MLAM_PARAMS, force_compute=True).ml_action_manager 
             agent = MyAgent(mlam, layout, **gptargs)
         
@@ -95,6 +95,7 @@ def make_agent(alg:str, mdp, layout, **gptargs):
     elif alg in ['Human']:
         agent = KeyboardAgent()
     else:
+        print(alg)
         raise ValueError("Unsupported algorithm.")
 
     agent.set_mdp(mdp)

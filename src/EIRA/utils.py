@@ -97,7 +97,7 @@ def retry_with_exponential_backoff(
                         f"Maximum number of retries ({max_retries}) exceeded."
                     )
                 delay *= exponential_base * (1 + jitter * random.random())
-                time.sleep(delay)
+                #time.sleep(delay)
             except Exception as e:
                 raise e
 
