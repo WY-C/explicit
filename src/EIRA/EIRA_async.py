@@ -38,6 +38,9 @@ class ProAgent(object):
         self.openai_api_keys = []
         self.load_openai_keys()
         self.key_rotation = True
+        # [NEW] 끼임(Stuck) 감지용 변수
+        self.stuck_steps = 0
+        self.last_pos_for_stuck = None
 
     def load_openai_keys(self):
         with open(openai_key_file, "r") as f:
@@ -72,12 +75,12 @@ class ProMediumLevelAgent(ProAgent):
             mlam,
             layout,
             model = "Qwen/Qwen3-VL-8B-Instruct",
-            prompt_level='l2-ap', # ['l1-p', 'l2-ap', 'l3-aip']
+            prompt_level='l2-ap', 
             belief_revision=False,
             retrival_method="recent_k",
             K=3,
             auto_unstuck=True,
-            controller_mode='new', # the default overcooked-ai Greedy controller
+            controller_mode='new', 
             debug_mode='N', 
             agent_index=None,
             outdir = None,
@@ -116,7 +119,6 @@ class ProMediumLevelAgent(ProAgent):
             "pot": []
         }
         self.cached_terrain_matrix = {
-            # [중요] 원본 mdp가 오염되지 않도록 deepcopy를 필수적으로 사용해야 합니다.
             'matrix': copy.deepcopy(self.mlam.mdp.terrain_mtx), 
             'height': len(self.mlam.mdp.terrain_mtx),
             'width': len(self.mlam.mdp.terrain_mtx[0])
@@ -124,15 +126,24 @@ class ProMediumLevelAgent(ProAgent):
         self.action_regex = re.compile(r'\((\s*\d+\s*)\)')
         self.overcooked_version = pkg_resources.get_distribution("overcooked_ai").version
 
-        self.layout_prompt = self.generate_layout_prompt()
+        # [초기화]
+        self.layout_prompt = ""
+        self.partner_move_history = []
 
-        # [NEW] 비동기 처리를 위한 변수 초기화
-        self.is_thinking = False       # 현재 스레드가 돌고 있는지
-        self.think_thread = None       # 스레드 객체
-        self.next_ml_action = None     # 스레드 결과 저장소
-        self.lock = threading.Lock()   # 데이터 경쟁 방지용 락
+        # [NEW] 비동기 처리 및 타임아웃을 위한 변수
+        self.is_thinking = False       
+        self.think_thread = None       
+        self.next_ml_action = None     
+        self.lock = threading.Lock()   
         self.prev_partner_move = None
         self.current_thought = ""
+        
+        # [NEW] 타임아웃/재요청 관리 변수
+        self.thinking_start_time = 0.0  # 생각 시작 시간
+        self.thinking_request_id = 0    # 요청 고유 ID (오래된 요청 무시용)
+        self.TIMEOUT_SECONDS = 4.0      # 3초 타임아웃 설정
+
+
     def set_mdp(self, mdp):
         self.mdp = mdp
 
@@ -174,6 +185,8 @@ class ProMediumLevelAgent(ProAgent):
         self.current_timestep = 0
         self.teammate_ml_actions_dict = {}
         self.teammate_intentions_dict = {}
+        self.stuck_steps = 0
+        self.last_pos_for_stuck = None
         
         # [NEW] 비동기 상태 초기화
         with self.lock:
@@ -187,64 +200,66 @@ class ProMediumLevelAgent(ProAgent):
 
         print(self.planner.instruction_head_list[0]['content'])
       
-    def generate_layout_prompt(self):
+    def generate_layout_prompt(self, my_pos, other_pos):
+        """
+        [최적화 V3] 서빙 카운터(Serve) 추가 및 포맷 통일
+        출력 예시: <Serve 0> [P0:5, P1:2]
+        """
         # 1. 매핑 초기화
         self.global_id_mapping = {
-            "onion_dispenser": [],
-            "dish_dispenser": [],
-            "tomato_dispenser": [],
-            "serving": [],
-            "pot": []
+            "onion_dispenser": [], "dish_dispenser": [], "tomato_dispenser": [], "serving": [], "pot": []
         }
-        self.pot_id_to_pos = [] # 레거시 호환용
+        self.pot_id_to_pos = [] 
 
-        # 2. 출력할 이름 정의
+        # 2. 이름 매핑 (Serve 추가됨)
         name_map = {
-            "onion_dispenser": "Onion Dispenser",
-            "dish_dispenser": "Dish Dispenser",
-            "tomato_dispenser": "Tomato Dispenser",
-            "serving": "Serving Loc",
+            "onion_dispenser": "OnionD",    # Dispenser
+            "dish_dispenser": "DishD",      # Dispenser
+            "serving": "Serve",             # [중요] Serving Location 추가
             "pot": "Pot"
         }
 
-        layout_prompt = "Layout Information: "
+        layout_prompt = "Layout: "
         
-        # 3. 각 객체 타입별로 순회하며 "ID at 좌표" 형식 생성
+        # 3. 객체 순회 및 거리 계산
         for key, readable_name in name_map.items():
-            # MDP에서 위치 정보 가져오기
+            # MDP에서 위치 정보 가져오기 (get_serving_locations 등)
             locations = getattr(self.mdp, f"get_{key}_locations")()
-            
-            # [중요] ID 매핑 저장 (Action 실행 시 사용됨)
             self.global_id_mapping[key] = locations
             
-            # 해당 객체가 맵에 없으면 건너뜀
             if not locations:
                 continue
                 
-            # 문자열 생성: "<Pot 0> at (4, 2)" 형태
             items_str_list = []
             for i, pos in enumerate(locations):
-                items_str_list.append(f"<{readable_name} {i}> at {pos}")
+                # --- 거리 계산 로직 (Player ID에 맞춰 할당) ---
+                # self.agent_index가 0이면 my_pos가 P0, other_pos가 P1
+                if self.agent_index == 0:
+                    dist_p0 = abs(pos[0] - my_pos[0]) + abs(pos[1] - my_pos[1])
+                    dist_p1 = abs(pos[0] - other_pos[0]) + abs(pos[1] - other_pos[1])
+                else: # self.agent_index가 1이면 my_pos가 P1, other_pos가 P0
+                    dist_p1 = abs(pos[0] - my_pos[0]) + abs(pos[1] - my_pos[1])
+                    dist_p0 = abs(pos[0] - other_pos[0]) + abs(pos[1] - other_pos[1])
+
+                # [최종 포맷] 좌표 제거, Serve 포함, 단축된 거리 표기
+                # 예: <Serve 0> [P0:5, P1:2]
+                items_str_list.append(f"<{readable_name} {i}> [P0:{dist_p0}, P1:{dist_p1}]")
                 
-                # 레거시 호환용
                 if key == "pot":
                     self.pot_id_to_pos.append(pos)
             
-            # 리스트를 콤마로 연결하여 추가
-            # 예: "Pots: <Pot 0> at (4, 2), <Pot 1> at (4, 3); "
-            layout_prompt += f"{readable_name}s: {', '.join(items_str_list)}; "
+            # 항목별로 묶어서 추가 (예: Serve: <Serve 0> [...], <Serve 1> [...]; )
+            layout_prompt += f"{', '.join(items_str_list)}; "
 
-        layout_prompt = layout_prompt.strip() + "\n"
-        return layout_prompt
-
+        return layout_prompt.strip() + "\n"
     def generate_state_prompt(self, state):
         ego = state.players[self.agent_index]
         teammate = state.players[1 - self.agent_index]
+        self.layout_prompt = self.generate_layout_prompt(ego.position, teammate.position)
             
-        layout_info = ""
 
         history_prompt = ""
-        self.partner_move_history = []
+        #self.partner_move_history = []
 
         curr_partner_pos = teammate.position
         partner_idx = 1 - self.agent_index
@@ -266,7 +281,7 @@ class ProMediumLevelAgent(ProAgent):
         history_prompt += f"Moved: {move_str}"
         
         self.partner_move_history.append(curr_partner_pos)
-        if len(self.partner_move_history) > 5:
+        if len(self.partner_move_history) >= 5:
             self.partner_move_history.pop(0)
             
 
@@ -384,10 +399,14 @@ class ProMediumLevelAgent(ProAgent):
         
         # Scene 설명과 플레이어 정보는 보통 한 줄이나 붙어있는 문단으로 취급하므로 합칩니다.
         scene_block = time_prompt + ego_state_prompt + teammate_state_prompt
-        self.layout_prompt = self.generate_layout_prompt()
+
+        # print("LAYOUT PROMPT:", self.layout_prompt)
+        # print("SCENE BLOCK:", scene_block)
+        # print("HISTORY PROMPT:", history_prompt)
+        # print("KITCHEN STATE PROMPT:", kitchen_state_prompt)
+
         parts = [
             self.layout_prompt.strip(),  # Layout
-            layout_info.strip(),         # (비어있을 수 있음)
             scene_block.strip(),         # Scene + Players
             history_prompt.strip(),      # History
             kitchen_state_prompt.strip() # Kitchen
@@ -413,29 +432,33 @@ class ProMediumLevelAgent(ProAgent):
     The followings are the Planner part (THREADED)
     '''
     ##################
-    def _thinking_process(self, state_dict):
+    def _thinking_process(self, state_dict, request_id):
+        """
+        [Modified] request_id를 인자로 받아서, 최신 요청일 때만 결과를 반영합니다.
+        """
         try:
-            # 1. 딕셔너리를 다시 객체로 복구 (OvercookedState)
-            # 이 상태의 'current_state'는 맵 정보는 모르고 플레이어 위치만 아는 상태입니다.
             current_state = OvercookedState.from_dict(state_dict)
             
-            # 2. LLM 호출 함수 실행
-            # self.generate_ml_action 내부에서는 
-            # self.mdp (맵 정보)와 current_state (플레이어 정보)를 둘 다 사용할 것입니다.
-            # self는 공유되므로 접근 가능합니다.
-            
+            # LLM 호출 (시간이 걸림)
             plan = self.generate_ml_action(current_state)
 
             with self.lock:
-                self.next_ml_action = plan
+                # [중요] 현재 처리한 결과가 최신 요청(request_id)과 일치하는지 확인
+                # 만약 메인 스레드에서 이미 타임아웃으로 request_id를 올렸다면, 
+                # 이 결과는 버려집니다 (늦게 도착한 패킷 무시).
+                if self.thinking_request_id == request_id:
+                    self.next_ml_action = plan
+                    self.is_thinking = False
+                # else: 
+                #     print(f" [Thread] Discarded old result (Req:{request_id} != Curr:{self.thinking_request_id})")
 
         except Exception as e:
-            # 에러 처리
+            # 에러 발생 시에도 상태 초기화를 위해 체크
             import traceback
             traceback.print_exc()
-        finally:
             with self.lock:
-                self.is_thinking = False
+                if self.thinking_request_id == request_id:
+                    self.is_thinking = False
 
     def _correction_process(self, state_snapshot):
         """
@@ -447,7 +470,7 @@ class ProMediumLevelAgent(ProAgent):
             
             # # 1. 실패 피드백 생성 (Explainer LLM 호출 - 시간 소요)
             # 실시간성을 위해 스킵하기
-            #self.generate_failure_feedback(state_snapshot)
+            self.generate_failure_feedback(state_snapshot)
             
             # 2. 행동 재생성 (Planner LLM 호출 - 시간 소요)
             new_action = self.generate_ml_action(state_snapshot)
@@ -464,66 +487,102 @@ class ProMediumLevelAgent(ProAgent):
 
     def action(self, state):
         """
-        [Modified] Main Game Loop Action
-        이 함수는 절대 Blocking되면 안 됩니다.
+        [Modified] 3스텝 제자리 멈춤(Stuck) 감지 로직 적용
         """
-        # [Timing] 전체 틱 소요 시간 (가벼운 연산만 포함됨)
-        total_start_time = time.perf_counter()
-        
+        current_pos = state.players[self.agent_index].position
+
         # 1. 현재 수행 중인 High-Level Action 관리
         if self.current_ml_action is not None:
-            # (A) 완료 체크
-            if self.check_current_ml_action_done(state):
+            
+            # --- [NEW] 제자리 멈춤 감지 (위치가 그대로면 카운트 증가) ---
+            if self.last_pos_for_stuck == current_pos:
+                self.stuck_steps += 1
+            else:
+                self.stuck_steps = 0  # 한 칸이라도 움직이면 초기화
+            
+            self.last_pos_for_stuck = current_pos
+
+            # 🚨 3스텝 동안 제자리에 멈춰있고, 의도한 'wait' 행동이 아니라면 강제 취소!
+            if self.stuck_steps >= 3 and "wait" not in self.current_ml_action:
+                print(f"\n[Stuck] 제자리에 3스텝 이상 막혀서 '{self.current_ml_action}' 강제 취소! 다시 생각합니다.")
+                self.trace = False
+                self.current_ml_action = None
+                self.stuck_steps = 0
+                with self.lock:
+                    self.is_thinking = False
+                    
+            elif self.check_current_ml_action_done(state):
                 self.generate_success_feedback(state)
                 self.current_ml_action = None 
-            
-            # (B) 유효성 검증 (실패 시 즉시 중단 및 복구 스레드 시작)
+                self.stuck_steps = 0 # 완료 시 초기화
+                
             elif not self.validate_current_ml_action(state):
                 self.trace = False
-                self.current_ml_action = None # 행동 취소
-                
-                # 복구(Correction) 스레드 시작
+                self.current_ml_action = None
+                self.stuck_steps = 0 # 실패 시 초기화
                 with self.lock:
-                    if not self.is_thinking:
-                        self.is_thinking = True
-                        # 메인 게임 상태가 변하므로 스냅샷(Deepcopy) 전달 필수
-                        state_snapshot = copy.deepcopy(state)
-                        self.think_thread = threading.Thread(target=self._correction_process, args=(state_snapshot,))
-                        self.think_thread.start()
+                    self.is_thinking = False
 
-        # 2. 수행할 행동이 없을 때 (생각 결과 확인 또는 생각 시작)
+        # 2. 생각(Thinking) 관리 로직 (타임아웃 & 재요청 포함)
         if self.current_ml_action is None:
             with self.lock:
-                # (A) 스레드 결과가 도착했는지 확인
+                current_time = time.time()
+                
+                # (A) 결과 도착 확인 (성공)
                 if self.next_ml_action is not None:
                     self.current_ml_action = self.next_ml_action
                     self.next_ml_action = None
                     self.current_ml_action_steps = 0
-                    #print(f"\n[Agent] New Plan Arrived: {self.current_ml_action}")
-                    # 상세 LLM 타이밍 로그가 있다면 출력 (generate_ml_action에서 저장됨)
+                    
+                    # 🚨 [누락됐던 부분 추가] wait 액션일 경우 대기 시간을 파싱해서 설정해줍니다.
+                    if "wait" in self.current_ml_action:
+                        import re
+                        nums = re.findall(r'\d+', self.current_ml_action)
+                        self.time_to_wait = int(nums[0]) if nums else 1
+
                     if hasattr(self, 'last_llm_timing'):
                         print(f" >> LLM Timing: {json.dumps(self.last_llm_timing)}")
                 
-                # (B) 결과도 없고, 생각 중도 아니라면 -> 일반 계획(Thinking) 시작
+                # (B) [핵심] 타임아웃 체크 및 재요청
+                # 생각 중인데 3초가 지났다면? -> 기존 것 버리고 새로 요청
+                elif self.is_thinking and (current_time - self.thinking_start_time > self.TIMEOUT_SECONDS):
+                    print(f"\n[Timeout] LLM took > {self.TIMEOUT_SECONDS}s. Retrying with NEW state...")
+                    
+                    # 1. ID 증가 (이전 스레드의 결과가 나중에 와도 무시됨)
+                    self.thinking_request_id += 1
+                    
+                    # 2. 타이머 리셋
+                    self.thinking_start_time = current_time
+                    
+                    # 3. 새 스레드 시작 (현재의 최신 state 사용)
+                    safe_data = state.to_dict()
+                    req_id = self.thinking_request_id
+                    
+                    # 이전 스레드는 강제 종료할 수 없으므로 백그라운드에서 돌다가 _thinking_process의 ID 체크에서 걸러집니다.
+                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data, req_id))
+                    self.think_thread.start()
+
+                # (C) 생각이 안 돌고 있다면 -> 최초 생각 시작
                 elif not self.is_thinking:
                     self.is_thinking = True
-                    #print(f"\n[Agent] Start Thinking... (Non-blocking)")
+                    self.thinking_start_time = current_time
+                    self.thinking_request_id += 1 # 새 ID 발급
                     
                     safe_data = state.to_dict()
-                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data,))
+                    req_id = self.thinking_request_id
+                    
+                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data, req_id))
                     self.think_thread.start()
                     
 
-        # 3. 실제 Low-Level Action 반환 (Motion Planning)
-        
-        # 아직 생각 중이거나 행동이 정해지지 않았으면 대기(STAY)
+        # 3. Low-Level Motion Planning (이동)
         if self.current_ml_action is None:
-            random_action = random.choice(Direction.ALL_DIRECTIONS)
+            # 생각 중일 때는 안전하게 제자리에 멈춰있습니다.
             if self.overcooked_version == '1.1.0':
                 return Action.STAY, {}
             return Action.STAY
 
-        # 행동이 정해져 있으면 Motion Planner 실행 (빠른 연산이므로 메인 스레드에서 수행)
+        # 행동 실행
         self.trace = True 
         chosen_action = Action.STAY
         
@@ -532,20 +591,15 @@ class ProMediumLevelAgent(ProAgent):
             self.time_to_wait -= 1
             if self.time_to_wait <= 0:
                 self.current_ml_action = None
-            
-            # 랜덤 움직임 (Optional: 대기 중 무작위성)
             lis_actions = self.mdp.get_valid_actions(state.players[self.agent_index])
             chosen_action = lis_actions[np.random.randint(0,len(lis_actions))]
         else:
-            # 일반 이동
             possible_motion_goals = self.find_motion_goals(state)    
             current_motion_goal, chosen_action = self.choose_motion_goal(
                 state.players_pos_and_or[self.agent_index], 
                 possible_motion_goals, 
                 state
             )
-            
-            # 경로가 없거나 실패 시
             if chosen_action is None:
                  self.current_ml_action = "wait(1)"
                  self.time_to_wait = 1
@@ -553,9 +607,6 @@ class ProMediumLevelAgent(ProAgent):
 
         self.prev_state = state
         self.current_ml_action_steps += 1
-
-        # [Timing Report - Optional] 너무 잦은 출력 방지를 위해 10스텝마다 출력하거나 주석 처리 가능
-        # print(f"[Tick {state.timestep}] Cost: {time.perf_counter() - total_start_time:.5f}s")
 
         if self.overcooked_version == '1.1.0':
             return chosen_action, {}
@@ -663,7 +714,7 @@ class ProMediumLevelAgent(ProAgent):
         if self.prompt_level == "l3-aip":
             generated_intention = self.parse_ml_action(response, 1-self.agent_index)
             self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention
-            print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
+            #print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
 
         ml_action = self.parse_ml_action(response, self.agent_index)
 
@@ -1010,10 +1061,10 @@ class ProMediumLevelAgent(ProAgent):
             # print('\n\n\nBlocking Happend, executing default path\n\n\n')
             # print('current position = {}'.format(start_pos_and_or)) 
             # print('goal position = {}'.format(motion_goals))        
-            if np.random.rand() < 0.5:  
-                return None, Action.STAY
-            else: 
-                return self.get_lowest_cost_action_and_goal(start_pos_and_or, motion_goals)
+            # if np.random.rand() < 0.5:  
+            #     return None, Action.STAY
+            # else: 
+            return self.get_lowest_cost_action_and_goal(start_pos_and_or, motion_goals)
         return best_goal, best_action
 
     def real_time_planner(self, start_pos_and_or, goal, state):   

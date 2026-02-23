@@ -1,0 +1,554 @@
+#각각 플레이어에게 띄우는 함수
+def parse_separate_highlights(thought_text, layout_dict, num_AI=None):
+    """
+    my_player_id (int, optional): 0 또는 1. 지정할 경우, Plan이 해당 플레이어 ID인지 검증합니다.
+    """
+    highlight_for_inference_coords = []
+    highlight_for_plan_coords = []
+    
+    if not thought_text or not layout_dict:
+        return [], []
+
+    def _action_to_coords(act_str):
+        # (기존과 동일하여 생략)
+        if not act_str: return []
+        key_map = {
+            "pickup_onion": "onion_dispenser",
+            "pickup_dish": "dish_dispenser",
+            "put_onion_in_pot": "pot",
+            "fill_dish_with_soup": "pot",
+            "deliver_soup": "serving",
+            "place_obj_on_counter": "counter" # counter 추가 필요시
+        }
+        match = re.search(r'(\w+)\(?(\d+)?\)?', act_str) # 인자 없는 경우 대비 수정
+        if match:
+            act_name = match.group(1)
+            idx_str = match.group(2)
+            
+            # 인자가 없는 스킬(wait, place_obj 등) 처리
+            if not idx_str: 
+                return [] 
+                
+            idx = int(idx_str)
+            target_key = key_map.get(act_name)
+            
+            if target_key and target_key in layout_dict:
+                items = layout_dict[target_key]
+                if 0 <= idx < len(items):
+                    target = items[idx]
+                    if isinstance(target, dict) and 'position' in target:
+                        return [target['position']]
+                    else:
+                        return [target]
+        return []
+
+    # --- Intention (상대방) 파싱 ---
+    # 예: Intention for Player 0: "..."
+    # 숫자(\d+)를 캡처해서 파트너인지 확인 가능
+    intention_match = re.search(r'Intention.*?(?:Player (\d+))?.*:\s*"([^"]+)"', thought_text, re.IGNORECASE)
+    if intention_match:
+        # 그룹 2가 액션 문자열 (그룹 1은 플레이어 번호)
+        # 플레이어 번호 검증 로직을 넣을 수도 있음 (생략 가능)
+        action_str = intention_match.group(2)
+        highlight_for_inference_coords = _action_to_coords(action_str)
+
+    # --- Plan (나) 파싱 ---
+    # 예: Plan for Player 1: "..."
+    plan_match = re.search(r'Plan.*?(?:Player (\d+))?.*:\s*"([^"]+)"', thought_text, re.IGNORECASE)
+    if plan_match:
+        parsed_id = plan_match.group(1) # '0' 또는 '1'
+        action_str = plan_match.group(2)
+        
+        # 검증 로직: 내 ID가 주어졌는데, 텍스트의 ID와 다르면 무시하거나 경고
+        if num_AI is not None and parsed_id is not None:
+            if int(parsed_id) != num_AI:
+                print(f"Warning: Parsed plan for Player {parsed_id}, but I am Player {num_AI}.")
+                # 필요 시 return [], [] 혹은 에러 처리
+        
+        highlight_for_plan_coords = _action_to_coords(action_str)
+
+    return highlight_for_inference_coords, highlight_for_plan_coords
+
+def draw_centered_text(window, text, sub_text=None, color=(0, 0, 0), bg_color=(255, 255, 255)):
+    """화면 중앙에 텍스트를 그립니다."""
+    if window is None: return
+    
+    window.fill(bg_color)
+    screen_width, screen_height = window.get_size()
+    
+    # 폰트 설정 (한글 폰트 우선, 없으면 기본)
+    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
+    main_font = pygame.font.SysFont(font_name, 50, bold=True)
+    sub_font = pygame.font.SysFont(font_name, 30)
+
+    # 메인 텍스트
+    text_surf = main_font.render(text, True, color)
+    text_rect = text_surf.get_rect(center=(screen_width // 2, screen_height // 2 - 20))
+    window.blit(text_surf, text_rect)
+    
+    # 서브 텍스트 (옵션)
+    if sub_text:
+        sub_surf = sub_font.render(sub_text, True, (100, 100, 100))
+        sub_rect = sub_surf.get_rect(center=(screen_width // 2, screen_height // 2 + 40))
+        window.blit(sub_surf, sub_rect)
+        
+    pygame.display.flip()
+
+# ======================================================================================
+# [Unified Render Function] 통합 렌더링 함수
+# visual_level 1: Emoji Mode
+# visual_level 2: Natural Language Mode
+# visual_level 3: Highlight Mode
+# ======================================================================================
+def get_player_screen_pos(player_idx, env, map_start_y, start_x, surf_width, surf_height):
+    """플레이어의 현재 화면상 중심 좌표(x, y)를 반환합니다."""
+    player = env.state.players[player_idx]
+    grid_pos = player.position # (x, y)
+    
+    grid_width = len(env.mdp.terrain_mtx[0])
+    grid_height = len(env.mdp.terrain_mtx)
+    
+    tile_w = surf_width / grid_width
+    tile_h = surf_height / grid_height
+    
+    # 그리드 좌표를 픽셀 좌표로 변환 (타일의 정중앙)
+    screen_x = start_x + (grid_pos[0] * tile_w) + (tile_w / 2)
+    screen_y = map_start_y + (grid_pos[1] * tile_h) + (tile_h / 2)
+    
+    return screen_x, screen_y
+
+def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=False):
+    """
+    content_surf: 텍스트나 아이콘이 그려진 Surface
+    target_x, target_y: 말풍선 꼬리가 가리킬 대상(플레이어)의 좌표
+    is_thought: True면 점선/구름 모양(상대방 의도), False면 실선(내 계획)
+    """
+    padding = 10
+    tail_height = 15
+    bubble_w = content_surf.get_width() + (padding * 2)
+    bubble_h = content_surf.get_height() + (padding * 2)
+    
+    # 말풍선 위치 계산 (플레이어 머리 위)
+    bubble_x = target_x - (bubble_w / 2)
+    bubble_y = target_y - (bubble_h / 2) - 40 # 플레이어보다 40픽셀 위
+    
+    # 화면 밖으로 나가는 경우 처리 (위쪽 공간 없으면 아래로)
+    if bubble_y < 10:
+        bubble_y = target_y + 30
+        tail_direction = "up"
+    else:
+        tail_direction = "down"
+
+    # 말풍선 배경 (흰색 둥근 사각형)
+    bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
+    pygame.draw.rect(window, (255, 255, 255), bubble_rect, 0, border_radius=10)
+    
+    # 테두리 색상 및 두께 (Thought는 회색, Plan은 검은색)
+    border_color = (100, 100, 100) if is_thought else (0, 0, 0)
+    border_width = 2
+    pygame.draw.rect(window, border_color, bubble_rect, border_width, border_radius=10)
+
+    # 꼬리 그리기 (삼각형)
+    if tail_direction == "down":
+        p1 = (target_x, target_y - 20) # 꼬리 끝 (플레이어 머리 근처)
+        p2 = (target_x - 10, bubble_y + bubble_h - 2)
+        p3 = (target_x + 10, bubble_y + bubble_h - 2)
+    else: # up
+        p1 = (target_x, target_y + 20)
+        p2 = (target_x - 10, bubble_y + 2)
+        p3 = (target_x + 10, bubble_y + 2)
+    
+    pygame.draw.polygon(window, (255, 255, 255), [p1, p2, p3]) # 내부 채우기
+    pygame.draw.polygon(window, border_color, [p1, p2, p3], 2) # 테두리
+
+    # 내용(텍스트/아이콘) 그리기
+    window.blit(content_surf, (bubble_x + padding, bubble_y + padding))
+
+def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
+                thought_msg=None, show_intention=True):
+    
+    highlight_color_green = (80, 220, 150)
+    highlight_color_blue = (50, 120, 255)
+    
+    if not window or not visualizer:
+        return
+
+    # 1. 배경 및 공통 설정
+    window.fill((255, 255, 255)) 
+    screen_width, screen_height = window.get_size()
+    
+    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
+    font_header = pygame.font.SysFont(font_name, 30)
+    
+    # 상단 헤더
+    text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
+    window.blit(text, (10, 10))
+
+    # 맵 렌더링 위치 설정
+    map_start_y = 100
+    state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
+    surf_width, surf_height = state_surface.get_size()
+    start_x = (screen_width - surf_width) // 2
+    
+    window.blit(state_surface, (start_x, map_start_y))
+
+    # --- 말풍선 로직 시작 ---
+    if thought_msg and visual_level in [1, 2]:
+        raw_lines = thought_msg.split('\n')
+        
+        # 파싱된 정보를 저장할 딕셔너리
+        # Key: Player Index (0 or 1), Value: Content Surface, Type(Plan/Intention)
+        bubbles_to_draw = []
+
+        font_bubble = pygame.font.SysFont(font_name, 20 if visual_level == 2 else 24)
+        
+        # 아이콘 맵핑 (Level 1용)
+        icon_map = {
+            "pickup_onion": "onions", "pickup_dish": "dishes", "pickup_tomato": "tomatoes",
+            "put_onion_in_pot": "pot", "put_tomato_in_pot": "pot",
+            "fill_dish_with_soup": "soup-onion-cooked",
+            "deliver_soup": "serving", "wait": "stay"
+        }
+
+        for line in raw_lines:
+            line = line.strip()
+            if not line: continue
+            
+            target_pid = -1
+            is_thought = False # False=Plan(실선), True=Intention(점선/회색)
+            display_text = ""
+            
+            # 파싱 로직
+            if "Plan" in line:
+                # "Plan for Player 0" -> 0번 플레이어 머리 위에 띄움
+                match = re.search(r'Player (\d+)', line)
+                if match:
+                    target_pid = int(match.group(1))
+                    is_thought = False # 나의 계획
+                    # 텍스트 정제
+                    content_str = line.split(':')[-1].strip().replace('"', '')
+            
+            elif "Intention" in line and show_intention:
+                # "Intention for Player 1" -> 1번 플레이어 머리 위에 띄움 (예측)
+                match = re.search(r'Player (\d+)', line)
+                if match:
+                    target_pid = int(match.group(1))
+                    is_thought = True # 남의 의도(예측)
+                    content_str = line.split(':')[-1].strip().replace('"', '')
+            
+            if target_pid != -1:
+                # 말풍선 내부 컨텐츠(Surface) 생성
+                content_surf = None
+                
+                # [Visual Level 1: Emoji Mode]
+                if visual_level == 1:
+                    # 아이콘 찾기
+                    found_icon = None
+                    for key, val in icon_map.items():
+                        if key in content_str:
+                            found_icon = val
+                            break
+                    
+                    if found_icon:
+                        icon_size = 40
+                        s = pygame.Surface((icon_size, icon_size), pygame.SRCALPHA)
+                        if found_icon == 'stay':
+                            try:
+                                raw_img = pygame.image.load('stay.png').convert_alpha()
+                                pygame.transform.scale(raw_img, (icon_size, icon_size), s)
+                            except: pass
+                        else:
+                            # 오버쿡드 에셋에서 가져오기 시도
+                            try: visualizer.TERRAINS_IMG.blit_on_surface(s, (0,0), found_icon)
+                            except:
+                                try: visualizer.OBJECTS_IMG.blit_on_surface(s, (0,0), found_icon)
+                                except: pass
+                        
+                        # 아이콘 크기 조정
+                        content_surf = pygame.transform.scale(s, (icon_size, icon_size))
+                    else:
+                        # 아이콘 못 찾으면 텍스트로
+                        content_surf = font_bubble.render(content_str[:10], True, (0,0,0))
+
+                # [Visual Level 2: Natural Language Mode]
+                elif visual_level == 2:
+                    # 너무 길면 자르거나 줄바꿈 처리 필요하지만 여기선 간단히
+                    clean_text = content_str.replace('_', ' ').capitalize()
+                    content_surf = font_bubble.render(clean_text, True, (0, 0, 0))
+
+                # 말풍선 리스트에 추가
+                if content_surf:
+                    bubbles_to_draw.append({
+                        "pid": target_pid,
+                        "surf": content_surf,
+                        "is_thought": is_thought
+                    })
+
+        # 실제로 그리기
+        for b in bubbles_to_draw:
+            px, py = get_player_screen_pos(b['pid'], env, map_start_y, start_x, surf_width, surf_height)
+            draw_speech_bubble(window, b['surf'], px, py, is_thought=b['is_thought'])
+
+
+    # --- [Visual Level 3: Highlight Mode] (기존 유지) ---
+    elif visual_level == 3 and thought_msg:
+        highlight_for_inference_coords, highlight_for_plan_coords = parse_separate_highlights(thought_msg, layout_dict, num_AI=num_AI)
+        if not show_intention: highlight_for_inference_coords = []
+
+        grid_width = len(env.mdp.terrain_mtx[0])
+        grid_height = len(env.mdp.terrain_mtx)
+        tile_w = surf_width / grid_width
+        tile_h = surf_height / grid_height
+
+        if num_AI == 0:
+            inf_color, plan_color = highlight_color_green, highlight_color_blue 
+        else:
+            inf_color, plan_color = highlight_color_blue, highlight_color_green  
+
+        for coords, color in [(highlight_for_inference_coords, inf_color), (highlight_for_plan_coords, plan_color)]:
+            if not coords: continue
+            s = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
+            s.fill((*color, 100))
+            for (hx, hy) in coords:
+                dx = start_x + (hx * tile_w)
+                dy = map_start_y + (hy * tile_h)
+                window.blit(s, (dx, dy))
+                pygame.draw.rect(window, color, pygame.Rect(dx, dy, tile_w, tile_h), 3)
+
+    pygame.display.flip()
+
+
+#한번에 다 띄우는 함수
+def get_player_screen_pos(player_idx, env, map_start_y, start_x, surf_width, surf_height):
+    """플레이어의 현재 화면상 중심 좌표(x, y)를 반환합니다."""
+    player = env.state.players[player_idx]
+    grid_pos = player.position
+    grid_width = len(env.mdp.terrain_mtx[0])
+    grid_height = len(env.mdp.terrain_mtx)
+    tile_w = surf_width / grid_width
+    tile_h = surf_height / grid_height
+    screen_x = start_x + (grid_pos[0] * tile_w) + (tile_w / 2)
+    screen_y = map_start_y + (grid_pos[1] * tile_h) + (tile_h / 2)
+    return screen_x, screen_y
+
+def draw_speech_bubble(window, content_surf, target_x, target_y):
+    """말풍선을 그리는 함수 (꼬리 포함)"""
+    padding = 10
+    bubble_w = content_surf.get_width() + (padding * 2)
+    bubble_h = content_surf.get_height() + (padding * 2)
+    
+    bubble_x = target_x - (bubble_w / 2)
+    bubble_y = target_y - (bubble_h / 2) - 50 # 플레이어 머리 위로 띄움
+    
+    # 화면 위로 나가는 경우 아래로
+    tail_direction = "down"
+    if bubble_y < 10:
+        bubble_y = target_y + 35
+        tail_direction = "up"
+
+    # 말풍선 배경
+    bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_w, bubble_h)
+    pygame.draw.rect(window, (255, 255, 255), bubble_rect, 0, border_radius=15)
+    pygame.draw.rect(window, (0, 0, 0), bubble_rect, 2, border_radius=15) # 검은 테두리
+
+    # 꼬리
+    if tail_direction == "down":
+        p1 = (target_x, target_y - 25)
+        p2 = (target_x - 10, bubble_y + bubble_h - 2)
+        p3 = (target_x + 10, bubble_y + bubble_h - 2)
+    else:
+        p1 = (target_x, target_y + 25)
+        p2 = (target_x - 10, bubble_y + 2)
+        p3 = (target_x + 10, bubble_y + 2)
+    
+    pygame.draw.polygon(window, (255, 255, 255), [p1, p2, p3])
+    pygame.draw.polygon(window, (0, 0, 0), [p1, p2, p3], 2)
+
+    window.blit(content_surf, (bubble_x + padding, bubble_y + padding))
+
+def create_combined_content(visual_level, partner_act, ai_act, visualizer, font):
+    """
+    상대방 행동(Intention)과 내 행동(Plan)을 하나의 Surface로 합칩니다.
+    형식: [Partner Act] -> [AI Act]
+    """
+    # --- [Level 1: Emoji Mode] ---
+    if visual_level == 1:
+        icon_size = 40
+        arrow_width = 30
+        
+        # 아이콘 로딩 헬퍼
+        def get_icon(act_str):
+            s = pygame.Surface((icon_size, icon_size), pygame.SRCALPHA)
+            
+            # 매핑
+            icon_map = {
+                "pickup_onion": "onions", "pickup_dish": "dishes", "pickup_tomato": "tomatoes",
+                "put_onion_in_pot": "pot", "put_tomato_in_pot": "pot",
+                "fill_dish_with_soup": "soup-onion-cooked",
+                "deliver_soup": "serving", "wait": "stay"
+            }
+            
+            key = None
+            for k, v in icon_map.items():
+                if k in act_str:
+                    key = v
+                    break
+            
+            if key:
+                if key == 'stay':
+                    try:
+                        raw = pygame.image.load('stay.png').convert_alpha()
+                        pygame.transform.scale(raw, (icon_size, icon_size), s)
+                    except: pass
+                else:
+                    try: visualizer.TERRAINS_IMG.blit_on_surface(s, (0,0), key)
+                    except:
+                        try: visualizer.OBJECTS_IMG.blit_on_surface(s, (0,0), key)
+                        except: pass
+            return s
+
+        p_icon = get_icon(partner_act)
+        a_icon = get_icon(ai_act)
+        
+        # 전체 크기 계산
+        total_w = icon_size + arrow_width + icon_size
+        total_h = icon_size
+        surf = pygame.Surface((total_w, total_h), pygame.SRCALPHA)
+        
+        # 1. Partner Icon (약간 흐리게 처리하여 '생각/예측'임을 표현)
+        p_icon.set_alpha(150) 
+        surf.blit(p_icon, (0, 0))
+        
+        # 2. Arrow (->)
+        start_arrow = (icon_size + 5, icon_size // 2)
+        end_arrow = (icon_size + arrow_width - 5, icon_size // 2)
+        pygame.draw.line(surf, (0,0,0), start_arrow, end_arrow, 3)
+        pygame.draw.polygon(surf, (0,0,0), [
+            end_arrow, 
+            (end_arrow[0]-5, end_arrow[1]-5), 
+            (end_arrow[0]-5, end_arrow[1]+5)
+        ])
+        
+        # 3. AI Icon (선명하게)
+        surf.blit(a_icon, (icon_size + arrow_width, 0))
+        
+        return surf
+
+    # --- [Level 2: Natural Language Mode] ---
+    else:
+        # 텍스트 생성: "You: [Act] -> Me: [Act]"
+        p_text = partner_act.replace('_', ' ').replace('pickup', 'Get').capitalize()
+        a_text = ai_act.replace('_', ' ').replace('pickup', 'Get').capitalize()
+        
+        text_str = f"You: {p_text}\nSo I: {a_text}"
+        
+        lines = text_str.split('\n')
+        max_w = 0
+        total_h = 0
+        rendered_lines = []
+        
+        for line in lines:
+            ts = font.render(line, True, (0,0,0))
+            max_w = max(max_w, ts.get_width())
+            total_h += ts.get_height()
+            rendered_lines.append(ts)
+            
+        surf = pygame.Surface((max_w, total_h), pygame.SRCALPHA)
+        curr_y = 0
+        for ts in rendered_lines:
+            surf.blit(ts, (0, curr_y))
+            curr_y += ts.get_height()
+            
+        return surf
+
+
+def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
+                thought_msg=None, show_intention=True):
+    
+    highlight_color_green = (80, 220, 150)
+    highlight_color_blue = (50, 120, 255)
+    
+    if not window or not visualizer: return
+
+    # 1. 기본 배경 및 맵 렌더링
+    window.fill((255, 255, 255)) 
+    screen_width, screen_height = window.get_size()
+    
+    font_name = "malgungothic" if "malgungothic" in pygame.font.get_fonts() else None
+    font_header = pygame.font.SysFont(font_name, 30)
+    text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
+    window.blit(text, (10, 10))
+
+    map_start_y = 100
+    state_surface = visualizer.render_state(env.state, grid=env.mdp.terrain_mtx)
+    surf_width, surf_height = state_surface.get_size()
+    start_x = (screen_width - surf_width) // 2
+    window.blit(state_surface, (start_x, map_start_y))
+
+    # 2. 말풍선 로직 (Combined Bubble)
+    if thought_msg and visual_level in [1, 2] and num_AI != -1:
+        raw_lines = thought_msg.split('\n')
+        
+        partner_intention = "unknown"
+        ai_plan = "wait"
+        
+        # 텍스트 파싱
+        for line in raw_lines:
+            line = line.strip()
+            if not line: continue
+            
+            # 상대방 의도 파싱 (Intention for Player X)
+            if "Intention" in line:
+                # num_AI가 아닌 사람의 Intention을 찾음
+                match = re.search(r'Player (\d+)', line)
+                if match and int(match.group(1)) != num_AI:
+                    parts = line.split(':')
+                    if len(parts) > 1:
+                        partner_intention = parts[-1].strip().replace('"', '')
+
+            # 내 계획 파싱 (Plan for Player X)
+            elif "Plan" in line:
+                match = re.search(r'Player (\d+)', line)
+                if match and int(match.group(1)) == num_AI:
+                    parts = line.split(':')
+                    if len(parts) > 1:
+                        ai_plan = parts[-1].strip().replace('"', '')
+
+        # show_intention 옵션이 꺼져있으면 Plan만 보여줌
+        if not show_intention:
+            partner_intention = "" # 빈 문자열 처리하여 create 함수 내에서 처리하거나 단순화 가능
+        
+        # 말풍선 내용 생성
+        font_bubble = pygame.font.SysFont(font_name, 22)
+        combined_surf = create_combined_content(visual_level, partner_intention, ai_plan, visualizer, font_bubble)
+        
+        # AI 머리 위에 그리기
+        ai_x, ai_y = get_player_screen_pos(num_AI, env, map_start_y, start_x, surf_width, surf_height)
+        draw_speech_bubble(window, combined_surf, ai_x, ai_y)
+
+    # 3. Highlight Mode (Level 3 - 기존 유지)
+    elif visual_level == 3 and thought_msg:
+        highlight_for_inference_coords, highlight_for_plan_coords = parse_separate_highlights(thought_msg, layout_dict, num_AI=num_AI)
+        if not show_intention: highlight_for_inference_coords = []
+
+        grid_width = len(env.mdp.terrain_mtx[0])
+        grid_height = len(env.mdp.terrain_mtx)
+        tile_w = surf_width / grid_width
+        tile_h = surf_height / grid_height
+
+        if num_AI == 0:
+            inf_color, plan_color = highlight_color_green, highlight_color_blue 
+        else:
+            inf_color, plan_color = highlight_color_blue, highlight_color_green  
+
+        for coords, color in [(highlight_for_inference_coords, inf_color), (highlight_for_plan_coords, plan_color)]:
+            if not coords: continue
+            s = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
+            s.fill((*color, 100))
+            for (hx, hy) in coords:
+                dx = start_x + (hx * tile_w)
+                dy = map_start_y + (hy * tile_h)
+                window.blit(s, (dx, dy))
+                pygame.draw.rect(window, color, pygame.Rect(dx, dy, tile_w, tile_h), 3)
+
+    pygame.display.flip()

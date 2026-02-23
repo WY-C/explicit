@@ -1,210 +1,199 @@
+import os
 import time
-import datetime
-import os
 import json
-from argparse import ArgumentParser
 import numpy as np
-from rich import print as rprint
-
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1" 
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", message=".*cuBLAS factory.*") # ignore "Unable to register cuBLAS factory" due to use tf-CPU
-
-
+import datetime
+import pygame  # Pygame 추가
+import visualization_utils as vu # 시각화 모듈 추가
+from argparse import ArgumentParser
 from distutils.util import strtobool
-def boolean_argument(value):
-    """Convert a string value to boolean."""
-    return bool(strtobool(value))
+import warnings
+import sys
 
-# import pkg_resources
-# VERSION = pkg_resources.get_distribution("overcooked_ai").version
-import importlib_metadata
-VERSION = importlib_metadata.version("overcooked_ai")
-print(f'\n----This overcook version is {VERSION}----\n')
+# 불필요한 경고 차단
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.simplefilter(action='ignore', category=UserWarning)
 
+# Rich 라이브러리
+from rich.console import Console
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
+
+# Overcooked AI
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
+from overcooked_ai_py.visualization.state_visualizer import StateVisualizer # 시각화 도구
 from overcooked_ai_py.agents.agent import AgentGroup
-from overcooked_ai_py.mdp.actions import Action
-
-
 from utils import NEW_LAYOUTS, OLD_LAYOUTS, make_agent
+import importlib_metadata
 
+try:
+    VERSION = importlib_metadata.version("overcooked_ai")
+except:
+    VERSION = "0.0.1"
 
-def main(variant):
+def boolean_argument(value):
+    return bool(strtobool(value))
 
-    layout = variant['layout']
-    horizon = variant['horizon']
-    episode = variant['episode']
+def get_combined_thought(agents_list):
+    for i, agent in enumerate(agents_list):
+        if hasattr(agent, 'current_thought') and agent.current_thought:
+            return i, agent.current_thought
+    return -1, None
 
-
-    mode = variant['mode']
+def run_benchmark(args):
+    console = Console()
     
-    if VERSION == '1.1.0':
-        mdp = OvercookedGridworld.from_layout_name(NEW_LAYOUTS[layout])
-    elif VERSION == '0.0.1':
-        mdp = OvercookedGridworld.from_layout_name(OLD_LAYOUTS[layout])
-
-    env = OvercookedEnv(mdp, horizon=horizon)
-    env.reset()
-
+    # 1. 설정
+    target_agent_name = args.target_agent
+    layouts = args.layouts 
+    opponents = ['SP', 'PBT', 'MEP', 'FCP', 'COLE'] # 벤치마크 대상
+    num_episodes = 5
+    horizon = args.horizon
+    visual_level = args.visual_level
     
-    p0_algo = variant['p0']
-    p1_algo = variant['p1']
-    print(f"\n===P0 agent: {p0_algo} | P1 agent: {p1_algo}===\n")
+    benchmark_results = { "config": vars(args), "results": {} }
 
+    console.print(f"\n[bold green]🚀 Visual Benchmark Started: {target_agent_name}[/bold green]")
+    console.print(f"Layouts: {layouts} | Opponents: {opponents}")
 
-    start_time = time.time()
-    results = []
+    # 2. Pygame 초기화 (한 번만)
+    pygame.init()
+    # 화면 크기 설정 (필요시 조정)
+    window_surface = pygame.display.set_mode((900, 600))
+    pygame.display.set_caption(f"Benchmark: {target_agent_name}")
+    visualizer = StateVisualizer(cook_time=20) # cook_time은 기본값
 
-    for i in range(episode):  
+    total_steps = len(layouts) * len(opponents) * num_episodes
 
-        agents_list = []
-        for alg in [p0_algo, p1_algo]:
-            if alg == "ProAgent":
-                assert variant['gpt_model']!=None, print(f'you should choose a gpt model')
-                print(f"\n----Use {variant['gpt_model']}----\n")
-                gpt_model = variant['gpt_model']
-                retrival_method = variant['retrival_method']
-                K = variant['K']
-                prompt_level = variant['prompt_level']
-                belief_revision = variant['belief_revision']
-                agent = make_agent(alg, mdp, layout, model=gpt_model, 
-                                   prompt_level=prompt_level, 
-                                   belief_revision=belief_revision, 
-                                   retrival_method=retrival_method, K=K)
-            elif alg == "BC":
-                agent = make_agent(alg, mdp, layout, seed_id=i)
-            else:
-                agent = make_agent(alg, mdp, layout)
-            agents_list.append(agent)
-
-        team = AgentGroup(*agents_list)
-        team.reset()
-
-        env.reset()
-        r_total = 0
-
-        if mode == 'exp':
-            for t in range(horizon):
-                s_t = env.state
-                # print(s_t.timestep, env.t)
-                print(f'\n>>>>>>>>>>>>>time: {t}<<<<<<<<<<<<<<<<<<<<<\n')
-                print(env.mdp.state_string(s_t).replace('ø', 'o'))   
-
-                a_t = team.joint_action(s_t) 
-                print(f"\n-----------Controller-----------\n")    
-                print(f"action: P0 {Action.to_char(a_t[0])} | P1 {Action.to_char(a_t[1])}")
-
-                obs, reward, done, env_info = env.step(a_t)
-
-                ml_actions = obs.ml_actions
-                skills = f""
-                for i, ml_action in enumerate(ml_actions):
-                    if ml_action == None:
-                        continue
-                    skills += f"P{i} finished <{ml_action}>. "
-                print(skills)
-
-                r_total += reward
-                rprint("[red]" + f'r: {reward} | total: {r_total}\n\n')
-
-            ## finish one episode
-            if p0_algo == "ProAgent"  or p1_algo == "ProAgent":
-                print(f"\n================\n")
-                try: # ProAgent id = 0
-                    print(f"P1's real behavior: {team.agents[0].teammate_ml_actions_dict}")
-                    print(f"The infered P1's intention: {team.agents[0].teammate_intentions_dict}")
-                except: # ProAgent id = 1
-                    print(f"P0's real behavior: {team.agents[1].teammate_ml_actions_dict}")
-                    print(f"The infered P0's intention: {team.agents[1].teammate_intentions_dict}")
-                print(f"\n================\n")
-
-            
-        elif mode == 'demo':
-            pass
-         
-        print(f"Episode {i+1}/{episode}: {r_total}\n====\n\n")
-        results.append(r_total)
-
-
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        TextColumn(" | Last Score: [bold cyan]{task.fields[last_score]}"),
+    ) as progress:
         
-   
-    end_time = time.time()
-    print(f"Cost time : {end_time - start_time:.3f}s-----\n\n")
+        main_task = progress.add_task("[green]Running...", total=total_steps, last_score="N/A")
 
+        for layout in layouts:
+            benchmark_results["results"][layout] = {}
+            
+            # 맵 로드
+            mdp_layout = NEW_LAYOUTS.get(layout, layout) if VERSION == '1.1.0' else OLD_LAYOUTS.get(layout, layout)
+            mdp = OvercookedGridworld.from_layout_name(mdp_layout)
+            env = OvercookedEnv(mdp, horizon=horizon)
+            layout_dict = vu.generate_layout_dict(mdp) # 시각화용 레이아웃 데이터
 
+            for opponent_name in opponents:
+                scores = []
+                
+                for ep in range(num_episodes):
+                    progress.update(main_task, description=f"[{layout}] vs {opponent_name} ({ep+1}/{num_episodes})")
+                    
+                    try:
+                        # 에이전트 생성
+                        agent0 = make_agent(target_agent_name, mdp, layout, 
+                                          model=args.gpt_model, prompt_level=args.prompt_level,
+                                          belief_revision=args.belief_revision, 
+                                          retrival_method=args.retrival_method, K=args.K)
+                        agent1 = make_agent(opponent_name, mdp, layout, seed_id=ep)
 
-    result_dict = {
-        "input": variant,
-        "raw_results": results,
-        "mean_result": int(np.mean(results)),
-    }
-    for (k,v) in result_dict.items():
-        print(f'{k}: {v}')
+                        agents_list = [agent0, agent1]
+                        team = AgentGroup(*agents_list)
+                        team.reset()
+                        env.reset()
+                        
+                        total_reward = 0
+                        done = False
+                        
+                        # [WarmUp] 첫 실행 딜레이 방지
+                        if hasattr(agent0, 'generate_ml_action'):
+                             vu.draw_centered_text(window_surface, f"Loading {opponent_name}...", "Thinking...", color=(0, 0, 255))
+                             _ = agent0.generate_ml_action(env.state)
 
-    print("reward_list : ", results)
-    if variant['save']:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                        # === 게임 루프 (딜레이 없음 + 렌더링 포함) ===
+                        for t in range(horizon):
+                            # 이벤트 처리 (창 닫기 등 방지)
+                            for event in pygame.event.get():
+                                if event.type == pygame.QUIT:
+                                    pygame.quit(); return
 
-        if variant['log_dir'] == None and variant['debug']:
-            log_dir = f"experiments/{timestamp}_{layout}_{horizon}_{p0_algo}_{p1_algo}_{episode}numep"
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-        else:
-            log_dir = variant['log_dir']
+                            # 1. 행동 결정 (LLM 추론 시간 소요)
+                            s_t = env.state
+                            a_t = team.joint_action(s_t)
+                            
+                            # 2. 환경 업데이트
+                            obs, reward, done, info = env.step(a_t)
+                            total_reward += reward
 
-        print(f"This is {log_dir}")
-        if p0_algo == "ProAgent"  or p1_algo == "ProAgent":
-            json_file = f"{log_dir}/results_{episode}_{horizon}_{gpt_model}_{prompt_level}_{retrival_method}_{K}.json"
-        else:
-            json_file = f"{log_dir}/results_{episode}_{horizon}.json"
-        with open(json_file, "w") as f:
-            json.dump(result_dict, f, indent=4)
+                            # 3. 화면 갱신 (인위적 딜레이 없음)
+                            thought_idx, thought_msg = get_combined_thought(agents_list)
+                            
+                            # 제목 표시줄에 현재 상태 표시
+                            pygame.display.set_caption(f"[{layout}] vs {opponent_name} (Ep {ep+1}) | Step: {t}/{horizon} | Score: {total_reward}")
+                            
+                            vu.render_game(
+                                window=window_surface, visualizer=visualizer, env=env, 
+                                step=t, horizon=horizon, reward=total_reward, 
+                                num_AI=thought_idx, 
+                                visual_level=visual_level, layout_dict=layout_dict, 
+                                thought_msg=thought_msg, show_intention=True
+                            )
+                            
+                            if done: break
+                        # ==========================================
+                        
+                        scores.append(total_reward)
+                        progress.update(main_task, advance=1, last_score=str(total_reward))
 
+                    except Exception as e:
+                        console.print(f"[bold red]Error in {layout} vs {opponent_name}: {e}[/bold red]")
+                        scores.append(0)
+                        progress.update(main_task, advance=1)
+                
+                # 통계 저장
+                benchmark_results["results"][layout][opponent_name] = {
+                    "mean": float(np.mean(scores)),
+                    "std": float(np.std(scores)),
+                    "scores": [float(s) for s in scores]
+                }
 
-    
+    # 3. 종료 및 저장
+    pygame.quit() # Pygame 종료
+
+    console.print("\n[bold]📊 Benchmark Summary[/bold]")
+    for layout in layouts:
+        table = Table(title=f"Results: {layout}")
+        table.add_column("Opponent", style="cyan"); table.add_column("Mean", style="magenta"); table.add_column("Std", style="green")
+        for opp in opponents:
+            data = benchmark_results["results"][layout].get(opp, {})
+            if data: table.add_row(opp, f"{data['mean']:.1f}", f"{data['std']:.1f}")
+        console.print(table); console.print("\n")
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_model = args.gpt_model.replace('/', '-')
+    filename = f"visual_bench_{target_agent_name}_{safe_model}_{timestamp}.json"
+    with open(filename, "w") as f: json.dump(benchmark_results, f, indent=4)
+    console.print(f"[bold blue]💾 Saved: {filename}[/bold blue]")
+
 if __name__ == '__main__':
-
-    '''
-    python main.py --layout cramped_room --p0 Greedy --p1 Greedy --horizon 100
-    python main.py --layout cramped_room --p0 ProAgent --p1 BC --horizon 400 -pl l2-ap
-    '''
-    parser = ArgumentParser(description='OvercookedAI Experiment')
-
-    # these are basis parses
-    parser.add_argument('--layout', '-l', type=str, default='cramped_room', choices=['cramped_room', 'asymmetric_advantages', 'coordination_ring', 'forced_coordination', 'counter_circuit'])
-    parser.add_argument('--p0',  type=str, default='Greedy', choices=['ProAgent', 'Greedy', 'COLE', 'FCP', 'MEP', 'PBT', 'SP', 'BC', 'Random', 'Stay', 'Human'], help='Algorithm for P0 agent 0')
-    parser.add_argument('--p1', type=str, default='Greedy', choices=['ProAgent', 'Greedy', 'COLE', 'FCP', 'MEP', 'PBT', 'SP', 'BC', 'Random', 'Stay', 'Human'], help='Algorithm for P1 agent 1')
-    parser.add_argument('--horizon', type=int, default=400, help='Horizon steps in one game')
-    parser.add_argument('--episode', type=int, default=1, help='Number of episodes')
-    parser.add_argument('--api_base', type=str, default='http://localhost:8000/v1', help='Local LLM API URL')
-    parser.add_argument('--api_key', type=str, default='EMPTY', help='API Key')
+    parser = ArgumentParser()
+    parser.add_argument('--target_agent', type=str, default='ProAgent')
+    parser.add_argument('--layouts', nargs='+', default=['cramped_room'])
+    parser.add_argument('--horizon', type=int, default=400)
     
-    # these parsers are only required when using ProAgent.
-    parser.add_argument('--gpt_model', type=str, default='Qwen/Qwen3-VL-8B-Instruct', choices=['text-davinci-003', 'gpt-3.5-turbo-16k', 'gpt-3.5-turbo-0301', 'gpt-3.5-turbo', 'gpt-4', 'gpt-4-0314'], help='Number of episodes')
-    parser.add_argument('--prompt_level', '-pl', type=str, default='l2-ap', choices=['l1-p', 'l2-ap', 'l3-aip'], help="'l1-p': make plans directly without CoT; 'l2-ap': plans with analysis; 'l3-aip': plans with analysis and intention.")
-    parser.add_argument('--belief_revision', '-br', type=boolean_argument, default=False, help='whether we use belief_revision or not')
-    parser.add_argument('--retrival_method', type=str, default="recent_k", choices=['recent_k', 'bert_topk'], help='Use similarity-based(BERT, CLIP) retrieval or retrieve recent K history in dialog.')
-    parser.add_argument('--K', type=int, default=1, help="The number of dialogues you want to retrieve.")
+    # 시각화 레벨 (0: 맵만, 1: 아이콘, 2: 텍스트)
+    parser.add_argument('--visual_level', type=int, default=1, help='0:Map, 1:Emoji, 2:Text')
 
-    # 
-    parser.add_argument('--mode', type=str, default='exp', choices=['exp', 'demo'], help='exp mode run step-by-step, demo mode run via traj')                                
-    parser.add_argument('--save', type=boolean_argument, default=True, help='Whether save the result')
-    parser.add_argument('--log_dir', type=str, default=None, help='dir to save result')
-    parser.add_argument('--debug', type=boolean_argument, default=True, help='debug mode')
-
+    # LLM 설정
+    parser.add_argument('--gpt_model', type=str, default='Qwen/Qwen3-VL-8B-Instruct')
+    parser.add_argument('--prompt_level', type=str, default='l3-aip')
+    parser.add_argument('--belief_revision', type=boolean_argument, default=False)
+    parser.add_argument('--retrival_method', type=str, default="recent_k")
+    parser.add_argument('--K', type=int, default=1)
 
     args = parser.parse_args()
-    variant = vars(args)
-
-
-    start_time = time.time()
-    main(variant)
-    end_time = time.time()
-    print(f"\n=======Finshed all=========\n")
-    print(f"Cost time : {end_time - start_time:.3f}s-----\n\n")
+    run_benchmark(args)

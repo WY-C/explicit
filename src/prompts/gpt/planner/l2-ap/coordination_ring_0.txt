@@ -40,8 +40,6 @@ Facts:
 - player0 can only pickup and hold one thing at a time. To put the thing down player0 is holding , player0 should use place_obj_on_counter. 
 - Pay very close attention to player's states and kitchen states. For example, when player0 is holding an onion, player0 cannot pickup_onion. When player0 has soup in hand, player0 should deliver_soup instantly.  
 - player0 can only pickup dish when a soup is ready.  
-
-
 - Based on the current scene, you need to 
     1. Describe the current scene and analysis it step by step.
     2. Based on the analysis, tell player0 the best plan to perform right now.  When giving plans, you can only choose from seven of the legal actions above. 

@@ -64,20 +64,20 @@ class ProAgent(object):
 
 class ProMediumLevelAgent(ProAgent):
     """
-    This agent default to use GPT-3.5 to generate medium level actions.
-    Now supports Asynchronous Execution (Non-blocking).
+    This agent uses GPT to generate medium level actions.
+    [Updated] Now executes SYNCHRONOUSLY (Blocking).
     """
     def __init__(
             self,
             mlam,
             layout,
             model = "Qwen/Qwen3-VL-8B-Instruct",
-            prompt_level='l2-ap', # ['l1-p', 'l2-ap', 'l3-aip']
+            prompt_level='l2-ap', 
             belief_revision=False,
             retrival_method="recent_k",
             K=3,
             auto_unstuck=True,
-            controller_mode='new', # the default overcooked-ai Greedy controller
+            controller_mode='new', 
             debug_mode='N', 
             agent_index=None,
             outdir = None,
@@ -108,15 +108,28 @@ class ProMediumLevelAgent(ProAgent):
         self.time_to_wait = 0
         self.possible_motion_goals = None
         self.pot_id_to_pos = []
+        self.global_id_mapping = {
+            "onion_dispenser": [],
+            "dish_dispenser": [],
+            "tomato_dispenser": [],
+            "serving": [],
+            "pot": []
+        }
+        self.cached_terrain_matrix = {
+            'matrix': copy.deepcopy(self.mlam.mdp.terrain_mtx), 
+            'height': len(self.mlam.mdp.terrain_mtx),
+            'width': len(self.mlam.mdp.terrain_mtx[0])
+        }
+        self.action_regex = re.compile(r'\((\s*\d+\s*)\)')
+        self.overcooked_version = pkg_resources.get_distribution("overcooked_ai").version
 
-        self.layout_prompt = self.generate_layout_prompt()
-
-        # [NEW] 비동기 처리를 위한 변수 초기화
-        self.is_thinking = False       # 현재 스레드가 돌고 있는지
-        self.think_thread = None       # 스레드 객체
-        self.next_ml_action = None     # 스레드 결과 저장소
-        self.lock = threading.Lock()   # 데이터 경쟁 방지용 락
+        self.layout_prompt = ""
+        self.partner_move_history = []
+        
+        # [수정] 비동기 관련 변수(lock, thread 등) 모두 제거
         self.current_thought = ""
+
+
     def set_mdp(self, mdp):
         self.mdp = mdp
 
@@ -158,11 +171,6 @@ class ProMediumLevelAgent(ProAgent):
         self.current_timestep = 0
         self.teammate_ml_actions_dict = {}
         self.teammate_intentions_dict = {}
-        
-        # [NEW] 비동기 상태 초기화
-        with self.lock:
-            self.is_thinking = False
-            self.next_ml_action = None
 
     def set_agent_index(self, agent_index):
         self.agent_index = agent_index
@@ -170,76 +178,97 @@ class ProMediumLevelAgent(ProAgent):
         self.explainer = self.create_gptmodule("explainer", retrival_method='recent_k', K=self.K)
 
         print(self.planner.instruction_head_list[0]['content'])
-
-    def generate_layout_prompt(self):
-        layout_prompt_dict = {
-            "onion_dispenser": " <Onion Dispenser {id}>",
-            "dish_dispenser": " <Dish Dispenser {id}>",
-            "tomato_dispenser": " <Tomato Dispenser {id}>",
-            "serving": " <Serving Loc {id}>",
-            "pot": " <Pot {id}>",
-        }
-        layout_prompt = "Here's the layout of the kitchen:"
-        for obj_type, prompt_template in layout_prompt_dict.items():
-            locations = getattr(self.mdp, f"get_{obj_type}_locations")()
-            for obj_id, obj_pos in enumerate(locations):
-                layout_prompt += prompt_template.format(id=obj_id) + ","
-                if obj_type == "pot":
-                    self.pot_id_to_pos.append(obj_pos)
-        layout_prompt = layout_prompt[:-1] + ".\n"
-        return layout_prompt
       
+    def generate_layout_prompt(self, my_pos, other_pos):
+        """
+        [최적화 V3] 서빙 카운터(Serve) 추가 및 포맷 통일
+        출력 예시: <Serve 0> [P0:5, P1:2]
+        """
+        # 1. 매핑 초기화
+        self.global_id_mapping = {
+            "onion_dispenser": [], "dish_dispenser": [], "tomato_dispenser": [], "serving": [], "pot": []
+        }
+        self.pot_id_to_pos = [] 
+
+        # 2. 이름 매핑 (Serve 추가됨)
+        name_map = {
+            "onion_dispenser": "OnionD",    # Dispenser
+            "dish_dispenser": "DishD",      # Dispenser
+            "serving": "Serve",             # [중요] Serving Location 추가
+            "pot": "Pot"
+        }
+
+        layout_prompt = "Layout: "
+        
+        # 3. 객체 순회 및 거리 계산
+        for key, readable_name in name_map.items():
+            # MDP에서 위치 정보 가져오기 (get_serving_locations 등)
+            locations = getattr(self.mdp, f"get_{key}_locations")()
+            self.global_id_mapping[key] = locations
+            
+            if not locations:
+                continue
+                
+            items_str_list = []
+            for i, pos in enumerate(locations):
+                # --- 거리 계산 로직 (Player ID에 맞춰 할당) ---
+                # self.agent_index가 0이면 my_pos가 P0, other_pos가 P1
+                if self.agent_index == 0:
+                    dist_p0 = abs(pos[0] - my_pos[0]) + abs(pos[1] - my_pos[1])
+                    dist_p1 = abs(pos[0] - other_pos[0]) + abs(pos[1] - other_pos[1])
+                else: # self.agent_index가 1이면 my_pos가 P1, other_pos가 P0
+                    dist_p1 = abs(pos[0] - my_pos[0]) + abs(pos[1] - my_pos[1])
+                    dist_p0 = abs(pos[0] - other_pos[0]) + abs(pos[1] - other_pos[1])
+
+                # [최종 포맷] 좌표 제거, Serve 포함, 단축된 거리 표기
+                # 예: <Serve 0> [P0:5, P1:2]
+                items_str_list.append(f"<{readable_name} {i}> [P0:{dist_p0}, P1:{dist_p1}]")
+                
+                if key == "pot":
+                    self.pot_id_to_pos.append(pos)
+            
+            # 항목별로 묶어서 추가 (예: Serve: <Serve 0> [...], <Serve 1> [...]; )
+            layout_prompt += f"{', '.join(items_str_list)}; "
+
+        return layout_prompt.strip() + "\n"
     def generate_state_prompt(self, state):
         ego = state.players[self.agent_index]
         teammate = state.players[1 - self.agent_index]
-
-        # =========================================================
-        # [NEW] 1. 맵의 고정 위치 정보 (Layout Info)
-        # =========================================================
-        # self.mdp에서 위치 정보를 가져와 리스트 형태로 바로 넣습니다.
-        layout_info = "Layout Information: "
-        layout_info += f"Onion Dispensers: {self.mdp.get_onion_dispenser_locations()}; "
-        layout_info += f"Dish Dispensers: {self.mdp.get_dish_dispenser_locations()}; "
-        
-        # 토마토는 있는 맵만 표시
-        tomato_locs = self.mdp.get_tomato_dispenser_locations()
-        if tomato_locs: 
-            layout_info += f"Tomato Dispensers: {tomato_locs}; "
+        self.layout_prompt = self.generate_layout_prompt(ego.position, teammate.position)
             
-        layout_info += f"Serving Locations: {self.mdp.get_serving_locations()}; "
-        layout_info += f"Pots: {self.mdp.get_pot_locations()}. "
 
-        # =========================================================
-        # [NEW] 2. 이동 및 계획 히스토리 (History Info)
-        # =========================================================
         history_prompt = ""
-        curr_pos = ego.position
+        #self.partner_move_history = []
+
+        curr_partner_pos = teammate.position
+        partner_idx = 1 - self.agent_index
         
-        # 이전 위치 확인
-        if hasattr(self, 'prev_state') and self.prev_state:
-            prev_pos = self.prev_state.players[self.agent_index].position
+        # [수정] 프롬프트 ID를 파트너 ID로 변경
+        history_prompt += f"\n<Player {partner_idx}> History: "
+
+        # 경로 문자열 생성 (예: (1,1) -> (1,2) -> (2,2) -> (2,3))
+        if not self.partner_move_history:
+            # 첫 시작인 경우
+            move_str = f"Start -> {curr_partner_pos}"
+            is_blocked = False
         else:
-            prev_pos = "Start"
+            # 과거 기록들을 화살표로 연결
+            past_moves_str = " -> ".join([str(pos) for pos in self.partner_move_history])
+            move_str = f"{past_moves_str} -> {curr_partner_pos}"
+        
+
+        history_prompt += f"Moved: {move_str}"
+        
+        self.partner_move_history.append(curr_partner_pos)
+        if len(self.partner_move_history) >= 5:
+            self.partner_move_history.pop(0)
             
-        history_prompt += f"\n<Player {self.agent_index}> History: "
-        history_prompt += f"Moved: {prev_pos} -> {curr_pos}" 
-        
-        # [핵심] 좌표가 같으면 막혔거나 멈췄음을 힌트로 제공
-        if prev_pos == curr_pos:
-            history_prompt += " (Stayed/Blocked). "
-        else:
-            history_prompt += ". "
-        
-        # 완료된 High-Level Plan 확인
-        if hasattr(self, 'previous_completed_plan') and self.previous_completed_plan:
-            history_prompt += f"Just Completed Plan: {self.previous_completed_plan}. "
-        else:
-            history_prompt += "Just Completed Plan: None. "
+
 
         # =========================================================
-        # 3. 기존 정보들 (시간, 플레이어 상태) - *생략된 부분 복구*
+        # 3. 기존 정보들 (시간, 플레이어 상태)
         # =========================================================
-        time_prompt = f"\nScene {state.timestep}: "
+        time_prompt = f"Scene {state.timestep}: "
         
         # Ego(나) 상태 설명
         ego_object = ego.held_object.name if ego.held_object else "nothing"
@@ -250,6 +279,7 @@ class ProMediumLevelAgent(ProAgent):
             ego_state_prompt += f"{ego_object}. "
         else:
             ego_state_prompt += f"one {ego_object}. "
+        ego_state_prompt += f" at {ego.position}. "
         
         # Teammate(동료) 상태 설명
         teammate_object = teammate.held_object.name if teammate.held_object else "nothing"
@@ -260,9 +290,10 @@ class ProMediumLevelAgent(ProAgent):
             teammate_state_prompt += f"{teammate_object}. "
         else:
             teammate_state_prompt += f"one {teammate_object}. "
+        teammate_state_prompt += f" at {teammate.position}. "
 
         # =========================================================
-        # 4. 주방 냄비 상태 (Kitchen State) - *생략된 부분 복구*
+        # 4. 주방 냄비 상태 (Kitchen State)
         # =========================================================
         kitchen_state_prompt = "Kitchen states: "
         prompt_dict = {
@@ -275,10 +306,8 @@ class ProMediumLevelAgent(ProAgent):
         }
 
         pot_states_dict = self.mdp.get_pot_states(state)   
-        import pkg_resources # 버전 체크용
-
-        # 버전별 냄비 상태 처리 로직 (기존 코드 유지)
-        if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
+        # 버전별 냄비 상태 처리 로직
+        if self.overcooked_version== '1.1.0':
             for key in pot_states_dict.keys():
                 if key == "cooking":
                     for pos in pot_states_dict[key]:
@@ -290,7 +319,7 @@ class ProMediumLevelAgent(ProAgent):
                         pot_id = self.pot_id_to_pos.index(pos)
                         kitchen_state_prompt += prompt_dict[key].format(id=pot_id) 
         
-        elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
+        elif self.overcooked_version== '0.0.1':
             for key in pot_states_dict.keys():
                 if key == "empty":
                     for pos in pot_states_dict[key]: 
@@ -309,9 +338,9 @@ class ProMediumLevelAgent(ProAgent):
                             else:
                                 kitchen_state_prompt += prompt_dict[soup_key].format(id=pot_id)
 
-        # Forced Coordination 맵 특수 처리 (기존 코드 유지)
+        # Forced Coordination 맵 특수 처리
         if self.layout == 'forced_coordination': 
-            from utils import get_intersect_counter, query_counter_states # 필요시 import 확인
+            from utils import get_intersect_counter, query_counter_states
             intersect_counters = get_intersect_counter(
                                 state.players_pos_and_or[self.agent_index], 
                                 state.players_pos_and_or[1 - self.agent_index], 
@@ -342,21 +371,34 @@ class ProMediumLevelAgent(ProAgent):
             teammate_state_prompt = "" # 이 맵에서는 동료 정보 숨김
 
         # =========================================================
-        # 5. 디버깅 및 반환
+        # 5. [핵심 수정] 최종 조합 방식 변경
         # =========================================================
-        final_prompt = (self.layout_prompt + 
-                        layout_info +           # [New]
-                        time_prompt + 
-                        ego_state_prompt + 
-                        history_prompt +        # [New]
-                        teammate_state_prompt + 
-                        kitchen_state_prompt)
+        # 각 파트를 리스트로 만들고, .strip()으로 앞뒤 공백/개행을 제거한 뒤
+        # '\n'으로 연결하여 중복 줄바꿈을 방지하고 깔끔한 포맷을 만듭니다.
         
-        # 디버깅용 출력 (너무 빠르면 주석 처리)
+        # Scene 설명과 플레이어 정보는 보통 한 줄이나 붙어있는 문단으로 취급하므로 합칩니다.
+        scene_block = time_prompt + ego_state_prompt + teammate_state_prompt
+
+        # print("LAYOUT PROMPT:", self.layout_prompt)
+        # print("SCENE BLOCK:", scene_block)
+        # print("HISTORY PROMPT:", history_prompt)
+        # print("KITCHEN STATE PROMPT:", kitchen_state_prompt)
+
+        parts = [
+            self.layout_prompt.strip(),  # Layout
+            scene_block.strip(),         # Scene + Players
+            history_prompt.strip(),      # History
+            kitchen_state_prompt.strip() # Kitchen
+        ]
+        
+        # 내용이 있는 파트만 \n으로 연결
+        final_prompt = "\n".join([p for p in parts if p])
+        
+        # 디버깅용 출력
         print("PROMPT:", final_prompt)
-        
         return final_prompt
-      
+    
+    
     def generate_belief_prompt(self):
         ego_id = self.agent_index
         intention_prompt = f"All <Player {ego_id}> infered intentions about <Player {1-ego_id}>: {self.teammate_intentions_dict}.\n"
@@ -369,29 +411,33 @@ class ProMediumLevelAgent(ProAgent):
     The followings are the Planner part (THREADED)
     '''
     ##################
-    def _thinking_process(self, state_dict):
+    def _thinking_process(self, state_dict, request_id):
+        """
+        [Modified] request_id를 인자로 받아서, 최신 요청일 때만 결과를 반영합니다.
+        """
         try:
-            # 1. 딕셔너리를 다시 객체로 복구 (OvercookedState)
-            # 이 상태의 'current_state'는 맵 정보는 모르고 플레이어 위치만 아는 상태입니다.
             current_state = OvercookedState.from_dict(state_dict)
             
-            # 2. LLM 호출 함수 실행
-            # self.generate_ml_action 내부에서는 
-            # self.mdp (맵 정보)와 current_state (플레이어 정보)를 둘 다 사용할 것입니다.
-            # self는 공유되므로 접근 가능합니다.
-            
+            # LLM 호출 (시간이 걸림)
             plan = self.generate_ml_action(current_state)
 
             with self.lock:
-                self.next_ml_action = plan
+                # [중요] 현재 처리한 결과가 최신 요청(request_id)과 일치하는지 확인
+                # 만약 메인 스레드에서 이미 타임아웃으로 request_id를 올렸다면, 
+                # 이 결과는 버려집니다 (늦게 도착한 패킷 무시).
+                if self.thinking_request_id == request_id:
+                    self.next_ml_action = plan
+                    self.is_thinking = False
+                # else: 
+                #     print(f" [Thread] Discarded old result (Req:{request_id} != Curr:{self.thinking_request_id})")
 
         except Exception as e:
-            # 에러 처리
+            # 에러 발생 시에도 상태 초기화를 위해 체크
             import traceback
             traceback.print_exc()
-        finally:
             with self.lock:
-                self.is_thinking = False
+                if self.thinking_request_id == request_id:
+                    self.is_thinking = False
 
     def _correction_process(self, state_snapshot):
         """
@@ -401,7 +447,8 @@ class ProMediumLevelAgent(ProAgent):
         try:
             print(f"\n[Agent] Validation Failed! Asking Explainer & Re-planning...")
             
-            # 1. 실패 피드백 생성 (Explainer LLM 호출 - 시간 소요)
+            # # 1. 실패 피드백 생성 (Explainer LLM 호출 - 시간 소요)
+            # 실시간성을 위해 스킵하기
             self.generate_failure_feedback(state_snapshot)
             
             # 2. 행동 재생성 (Planner LLM 호출 - 시간 소요)
@@ -419,60 +466,39 @@ class ProMediumLevelAgent(ProAgent):
 
     def action(self, state):
         """
-        [Modified] Main Game Loop Action
-        이 함수는 절대 Blocking되면 안 됩니다.
+        [Modified] Synchronous Logic
+        LLM 응답이 올 때까지 게임 루프가 멈추고 대기합니다.
         """
-        # [Timing] 전체 틱 소요 시간 (가벼운 연산만 포함됨)
-        total_start_time = time.perf_counter()
-        
-        # 1. 현재 수행 중인 High-Level Action 관리
+        # 1. 현재 수행 중인 High-Level Action 관리 (완료/실패 체크)
         if self.current_ml_action is not None:
-            # (A) 완료 체크
             if self.check_current_ml_action_done(state):
                 self.generate_success_feedback(state)
                 self.current_ml_action = None 
-            
-            # (B) 유효성 검증 (실패 시 즉시 중단 및 복구 스레드 시작)
             elif not self.validate_current_ml_action(state):
-                self.trace = False
-                self.current_ml_action = None # 행동 취소
-                
-            # 동기식 복구: 즉시 Explainer 호출 후 다시 계획
+                # 검증 실패 시 Explainer 호출 (선택 사항)
                 self.generate_failure_feedback(state)
-                self.current_ml_action = self.generate_ml_action(state)
-
-        # 2. 수행할 행동이 없을 때 (생각 결과 확인 또는 생각 시작)
-        if self.current_ml_action is None:
-            with self.lock:
-                # (A) 스레드 결과가 도착했는지 확인
-                if self.next_ml_action is not None:
-                    self.current_ml_action = self.next_ml_action
-                    self.next_ml_action = None
-                    self.current_ml_action_steps = 0
-                    print(f"\n[Agent] New Plan Arrived: {self.current_ml_action}")
-                    # 상세 LLM 타이밍 로그가 있다면 출력 (generate_ml_action에서 저장됨)
-                    if hasattr(self, 'last_llm_timing'):
-                        print(f" >> LLM Timing: {json.dumps(self.last_llm_timing)}")
-                
-                # (B) 결과도 없고, 생각 중도 아니라면 -> 일반 계획(Thinking) 시작
-                elif not self.is_thinking:
-                    self.is_thinking = True
-                    print(f"\n[Agent] Start Thinking... (Non-blocking)")
-                    
-                    safe_data = state.to_dict()
-                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data,))
-                    self.think_thread.start()
-                    
-
-        # 3. 실제 Low-Level Action 반환 (Motion Planning)
+                self.trace = False
+                self.current_ml_action = None
         
-        # 아직 생각 중이거나 행동이 정해지지 않았으면 대기(STAY)
+        # 2. 새로운 행동 생성 (동기적 실행)
         if self.current_ml_action is None:
-            print(f"\n[Agent] Planning new action (Blocking)...")
-            self.current_ml_action = self.generate_ml_action(state) # 여기서 응답 올 때까지 대기
-            self.current_ml_action_steps = 0
+            # [핵심 변경] 스레드를 생성하지 않고 직접 호출합니다.
+            # 이 함수가 리턴될 때까지 프로그램은 여기서 대기(Block)합니다.
+            try:
+                self.current_ml_action = self.generate_ml_action(state)
+                self.current_ml_action_steps = 0
+            except Exception as e:
+                print(f"[Error] LLM Generation Failed: {e}")
+                # 에러 발생 시 대기하거나 재시도하는 로직 필요 (여기선 Wait 처리)
+                self.current_ml_action = "wait(1)"
+                self.time_to_wait = 1
 
-        # 행동이 정해져 있으면 Motion Planner 실행 (빠른 연산이므로 메인 스레드에서 수행)
+        # 3. Low-Level Motion Planning (이동)
+        if self.current_ml_action is None:
+            # 혹시라도 None이면 대기
+            return Action.STAY
+
+        # 행동 실행 로직 (기존과 동일)
         self.trace = True 
         chosen_action = Action.STAY
         
@@ -481,21 +507,17 @@ class ProMediumLevelAgent(ProAgent):
             self.time_to_wait -= 1
             if self.time_to_wait <= 0:
                 self.current_ml_action = None
-            
-            # 랜덤 움직임 (Optional: 대기 중 무작위성)
             lis_actions = self.mdp.get_valid_actions(state.players[self.agent_index])
             chosen_action = lis_actions[np.random.randint(0,len(lis_actions))]
         else:
-            # 일반 이동
             possible_motion_goals = self.find_motion_goals(state)    
             current_motion_goal, chosen_action = self.choose_motion_goal(
                 state.players_pos_and_or[self.agent_index], 
                 possible_motion_goals, 
                 state
             )
-            
-            # 경로가 없거나 실패 시
             if chosen_action is None:
+                 # 경로를 못 찾으면 잠시 대기
                  self.current_ml_action = "wait(1)"
                  self.time_to_wait = 1
                  chosen_action = Action.STAY
@@ -503,16 +525,11 @@ class ProMediumLevelAgent(ProAgent):
         self.prev_state = state
         self.current_ml_action_steps += 1
 
-        # [Timing Report - Optional] 너무 잦은 출력 방지를 위해 10스텝마다 출력하거나 주석 처리 가능
-        # print(f"[Tick {state.timestep}] Cost: {time.perf_counter() - total_start_time:.5f}s")
-
-        if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
+        if self.overcooked_version == '1.1.0':
             return chosen_action, {}
-        elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
+        elif self.overcooked_version == '0.0.1':
             return chosen_action
-
     def parse_ml_action(self, response, agent_index): 
-
         if agent_index == 0: 
             pattern = r'layer\s*0: (.+)'
         elif agent_index == 1: 
@@ -521,80 +538,47 @@ class ProMediumLevelAgent(ProAgent):
             raise ValueError("Unsupported agent index.")
 
         match = re.search(pattern, response)
-        if match:
-            action_string = match.group(1)
-        else:
-            # raise Exception("please check the query")
-            action_string = response
-            # print("please check the query")
+        action_string = match.group(1).strip() if match else response.strip()
 
-        # Parse the response to get the medium level action string
-        try: 
-            ml_action = action_string.split()[0]
-        except:
-            print(f"\n[DEBUG] Raw LLM Response for Player {agent_index}: [{response}]")
-            print('failed on 528') 
-            action_string = 'wait(1)'
-            ml_action = action_string
-            # ml_action = 'wait(1)' 
+        # 1. Wait 커맨드 먼저 처리 (시간 조정 로직 등을 위해)
+        if "wait" in action_string:
+            def parse_wait_string(s):
+                if s == "wait": return 1
+                # 숫자만 추출
+                nums = re.findall(r'\d+', s)
+                if nums: return int(nums[0])
+                return 1
+            
+            # forced_coordination 맵일 경우 최소 3초 대기
+            wait_time = parse_wait_string(action_string)
+            if self.layout == 'forced_coordination': 
+                wait_time = max(3, wait_time)
+            
+            return f"wait({wait_time})"
 
-        if "place_obj" in action_string or "put_obj_oncounter" in action_string:
-            ml_action = "place_obj_on_counter"
+        # 2. 인덱스가 포함된 함수 호출형 액션 (pickup_onion(0)) 즉시 반환
+        # wait는 위에서 처리했으므로 제외됨
+        if re.search(r'\w+\(\d+\)', action_string):
+            if "," in action_string:
+                action_string = action_string.split(',')[0].strip()
+            return action_string
+
+        # 3. 레거시(구형) 텍스트 처리 (LLM이 인덱스 없이 말했을 경우 대비)
+        ml_action = action_string.split()[0] # 기본 단어 추출
+
+        if "place_obj" in action_string: ml_action = "place_obj_on_counter"
+        elif "deliver" in action_string: ml_action = "deliver_soup"
         elif "pick" in action_string:
-            if "onion" in action_string:
-                ml_action = "pickup_onion"
-            elif "tomato" in action_string:
-                ml_action = "pickup_tomato"
-            elif "dish" in action_string:
-                ml_action = "pickup_dish"
+            if "onion" in action_string: ml_action = "pickup_onion" # (0)이 없으면 자동 할당됨(find_motion_goals에서)
+            elif "tomato" in action_string: ml_action = "pickup_tomato"
+            elif "dish" in action_string: ml_action = "pickup_dish"
         elif "put" in action_string:
-            if "onion" in action_string:
-                ml_action = "put_onion_in_pot"
-            elif "tomato" in action_string:
-                ml_action = "put_tomato_in_pot"
+            if "onion" in action_string: ml_action = "put_onion_in_pot"
+            elif "tomato" in action_string: ml_action = "put_tomato_in_pot"
         elif "fill" in action_string:   
             ml_action = "fill_dish_with_soup"
-        elif "deliver" in action_string:
-            ml_action = "deliver_soup"
-        elif "wait" not in action_string:
-            ml_action='wait(1)'  
-            action_string = ml_action
-        if "wait" in action_string:
-            
-            def parse_wait_string(s):
-                # Check if it's just "wait"
-                if s == "wait":
-                    return 1
-
-                # Remove 'wait' and other characters from the string
-                s = s.replace('wait', '').replace('(', '').replace(')', '').replace('"', '').replace('.', '') 
-
-                # If it's a number, return it as an integer
-                if s.isdigit():
-                    return int(s)
-
-                # If it's not a number, return a default value or raise an exception
-                return 1
-            if self.layout == 'forced_coordination': 
-                # 这里可以改一下试试 
-                self.time_to_wait = max(3, parse_wait_string(action_string))
-            else: 
-                self.time_to_wait = parse_wait_string(action_string)    
-            # print(ml_action) 
-            # print(self.time_to_wait) 
-            
-            ml_action = f"wait({self.time_to_wait})"
-
-        else:
-            pass
         
-        # aviod to generate two skill, eg, Plan for Player 0: "deliver_soup(), pickup(onion)".
-        if "," in ml_action:
-            ml_action = ml_action.split(',')[0].strip()
-
-                    
-        return ml_action    
-
+        return ml_action
 
     def generate_ml_action(self, state):
         """
@@ -642,15 +626,11 @@ class ProMediumLevelAgent(ProAgent):
         print("====== GPT Query ======")
         print(response)  
         self.current_thought = response
-        # -------------------------------------------------
-        # 3. 파싱 (Parsing)
-        # -------------------------------------------------
-        # print("\n===== Parser =====\n")
-        ## specific for prompt need intention
+
         if self.prompt_level == "l3-aip":
             generated_intention = self.parse_ml_action(response, 1-self.agent_index)
             self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention
-            print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
+            #print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
 
         ml_action = self.parse_ml_action(response, self.agent_index)
 
@@ -674,91 +654,102 @@ class ProMediumLevelAgent(ProAgent):
     '''
     ##################
 
-    def check_current_ml_action_done(self,state):
+    def check_current_ml_action_done(self, state):
         """
         checks if the current ml action is done
-        :return: True or False
+        Supports indexed actions like 'pickup_onion(0)'.
         """
         player = state.players[self.agent_index]
-        # pot_states_dict = self.mlam.mdp.get_pot_states(state)
-        if "pickup" in self.current_ml_action:
-            pattern = r"pickup(?:[(]|_)(\w+)(?:[)]|)" # fit both pickup(onion) and pickup_onion
-            obj_str = re.search(pattern, self.current_ml_action).group(1)
-            return player.has_object() and player.get_object().name == obj_str
+        action = self.current_ml_action
         
-        elif "fill" in self.current_ml_action:
-            return player.held_object.name == 'soup'
+        # None 체크 (안전장치)
+        if not action:
+            return True
+
+        # 1. Pickup 계열: 해당 물건을 손에 쥐었는지 확인
+        if "pickup" in action:
+            target_obj = None
+            if "onion" in action: target_obj = "onion"
+            elif "dish" in action: target_obj = "dish"
+            elif "tomato" in action: target_obj = "tomato"
+            
+            # 물건을 들고 있고, 그 물건 이름이 목표와 같으면 완료
+            return player.has_object() and player.get_object().name == target_obj
         
-        elif "put" in self.current_ml_action or "place" in self.current_ml_action:
+        # 2. Fill 계열: 빈 접시가 수프가 담긴 접시로 변했는지 확인
+        elif "fill" in action:
+            # 손에 든 것이 있고, 그 이름이 'soup'이면 완료
+            return player.held_object is not None and player.held_object.name == 'soup'
+        
+        # 3. 손을 비우는 행동들 (Put, Place, Deliver)
+        # 냄비에 넣거나, 카운터에 두거나, 서빙하면 -> 손이 빔
+        elif "put" in action or "place" in action or "deliver" in action:
             return not player.has_object()
         
-        elif "deliver" in self.current_ml_action:
-            return not player.has_object()
-        
-        elif "wait" in self.current_ml_action:
-            return self.time_to_wait == 0
+        # 4. Wait 계열: 대기 시간이 끝났는지 확인
+        elif "wait" in action:
+            return self.time_to_wait <= 0
+            
+        return False
 
     def validate_current_ml_action(self, state):
         """
         make sure the current_ml_action exists and is valid
+        Supports indexed actions (e.g., pickup_onion(0))
+        Tomato logic removed.
         """
         if self.current_ml_action is None:
             return False
-
-        pot_states_dict = self.mdp.get_pot_states(state)
+            
+        action = self.current_ml_action
         player = state.players[self.agent_index]
-        if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
-            soup_cooking = len(pot_states_dict['cooking']) > 0
-            soup_ready = len(pot_states_dict['ready']) > 0
-            pot_not_full = pot_states_dict["empty"] + self.mdp.get_partially_full_pots(pot_states_dict)
-            cookable_pots = self.mdp.get_full_but_not_cooking_pots(pot_states_dict)
-        elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
-            soup_cooking = len(pot_states_dict['onion']['cooking'])+len(pot_states_dict['tomato']['cooking']) > 0
-            soup_ready = len(pot_states_dict['onion']['ready'])+len(pot_states_dict['tomato']['ready']) > 0
-            pot_not_full = pot_states_dict["empty"] + pot_states_dict["onion"]['partially_full'] + pot_states_dict["tomato"]['partially_full']
-            cookable_pots = pot_states_dict["onion"]['{}_items'.format(self.mdp.num_items_for_soup)] + pot_states_dict["tomato"]['{}_items'.format(self.mdp.num_items_for_soup)] # pot has max onions/tomotos
-
+        pot_states_dict = self.mdp.get_pot_states(state)
         
-        has_onion = False
-        has_tomato = False
-        has_dish = False
-        has_soup = False
+        # 플레이어 상태 확인
         has_object = player.has_object()
-        if has_object:
-            has_onion = player.get_object().name == 'onion'
-            has_tomato = player.get_object().name == 'tomato'
-            has_dish = player.get_object().name == 'dish'
-            has_soup = player.get_object().name == 'soup'
-        empty_counter = self.mdp.get_empty_counter_locations(state)
+        has_onion = has_object and player.get_object().name == 'onion'
+        has_dish = has_object and player.get_object().name == 'dish'
+        has_soup = has_object and player.get_object().name == 'soup'
+        
+        # 냄비 상태 계산
+        import pkg_resources
+        if self.overcooked_version == '1.1.0':
+            soup_ready = len(pot_states_dict['ready']) > 0
+            soup_cooking = len(pot_states_dict['cooking']) > 0
+            pot_available_for_onion = len(pot_states_dict["empty"] + self.mdp.get_partially_full_pots(pot_states_dict)) > 0
+        else:
+            # 0.0.1 버전
+            soup_ready = len(pot_states_dict['onion']['ready']) > 0
+            soup_cooking = len(pot_states_dict['onion']['cooking']) > 0
+            pot_available_for_onion = len(pot_states_dict["empty"] + pot_states_dict["onion"]['partially_full']) > 0
 
-
-        if self.current_ml_action in ["pickup(onion)", "pickup_onion"]:   
-
-            flag2 = len(self.find_motion_goals(state)) == 0 
-            if flag2: 
-                return False 
+        # --- 검증 로직 ---
+        
+        if "pickup_onion" in action:   
+            if len(self.find_motion_goals(state)) == 0: return False
             return not has_object and len(self.mdp.get_onion_dispenser_locations()) > 0
-        if self.current_ml_action in ["pickup(tomato)", "pickup_tomato"]:
-            return not has_object and len(self.mdp.get_tomato_dispenser_locations()) > 0
-        elif self.current_ml_action in ["pickup(dish)", "pickup_dish"]:
-            flag2 = len(self.find_motion_goals(state)) == 0 
-            if flag2: 
-                return False 
+
+        elif "pickup_dish" in action:
+            if len(self.find_motion_goals(state)) == 0: return False
             return not has_object and len(self.mdp.get_dish_dispenser_locations()) > 0
-        elif "put_onion_in_pot" in self.current_ml_action:
-            return has_onion and len(pot_not_full) > 0
-        elif "put_tomato_in_pot" in self.current_ml_action:
-            return has_tomato and len(pot_not_full) > 0
-        elif "place_obj_on_counter" in self.current_ml_action:
-            return has_object and len(empty_counter) > 0
-        elif "fill_dish_with_soup" in self.current_ml_action:
+            
+        elif "put_onion" in action:
+            return has_onion and pot_available_for_onion
+            
+        elif "place_obj" in action:
+            return has_object and len(self.mdp.get_empty_counter_locations(state)) > 0
+            
+        elif "fill_dish" in action:
             return has_dish and (soup_ready or soup_cooking)
-        elif "deliver_soup" in self.current_ml_action:
+            
+        elif "deliver" in action:
             return has_soup
-        elif "wait" in self.current_ml_action:
-            return 0 < int(self.current_ml_action.split('(')[1][:-1]) <= 20
-
-
+            
+        elif "wait" in action:
+            return True
+            
+        return False
+   
     def generate_success_feedback(self, state):
         success_feedback = f"### Controller Validation\nPlayer {self.agent_index} succeeded at {self.current_ml_action}. \n"
         print(success_feedback)  
@@ -804,63 +795,129 @@ class ProMediumLevelAgent(ProAgent):
 
     def find_motion_goals(self, state):
         """
-        Generates the motion goals for the given medium level action.
-        :param state:
-        :return:
+        Generates motion goals based on LLM output strings like 'pickup_onion(0)'.
+        Uses self.global_id_mapping to ensure ID consistency.
         """
         am = self.mlam
         motion_goals = []
         player = state.players[self.agent_index]
-        pot_states_dict = self.mdp.get_pot_states(state)
-        counter_objects = self.mdp.get_counter_objects_dict(
-            state, list(self.mdp.terrain_pos_dict["X"])
-        )
-        if self.current_ml_action in ["pickup(onion)", "pickup_onion"]:
-            motion_goals = am.pickup_onion_actions_new(state, counter_objects, state.players_pos_and_or, self.agent_index) 
+        
+        # -----------------------------------------------------------
+        # 1. Helper Function
+        # -----------------------------------------------------------
+        # -----------------------------------------------------------
+        # 1. Helper Function: Calculate interaction spots
+        # -----------------------------------------------------------
+        def get_interact_states_from_pos(target_pos):
+            """Returns valid (pos, orientation) tuples to interact with target_pos."""
+            valid_states = []
+            x, y = target_pos
+            
+            # MDP에서 맵 크기 가져오기
+            width = len(self.mdp.terrain_mtx[0])
+            height = len(self.mdp.terrain_mtx)
 
+            for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nx, ny = x + dx, y + dy
+                adj_pos = (nx, ny)
+                
+                # [수정] 맵 범위를 벗어나는지 먼저 확인해야 함 (IndexError 방지)
+                if 0 <= nx < width and 0 <= ny < height:
+                    # 범위 안일 때만 지형 타입 확인
+                    if self.mdp.get_terrain_type_at_pos(adj_pos) == ' ':
+                        face_dir = (-dx, -dy)
+                        valid_states.append((adj_pos, face_dir))
+                        
+            return valid_states
 
-        elif self.current_ml_action in ["pickup(tomato)", "pickup_tomato"]:
-            motion_goals = am.pickup_tomato_actions(state, counter_objects)
-        elif self.current_ml_action in ["pickup(dish)", "pickup_dish"]:
-            motion_goals = am.pickup_dish_actions_new(state, counter_objects , state.players_pos_and_or, self.agent_index)
-        elif "put_onion_in_pot" in self.current_ml_action:
-            motion_goals = am.put_onion_in_pot_actions(pot_states_dict)
-        elif "put_tomato_in_pot" in self.current_ml_action:
-            motion_goals = am.put_tomato_in_pot_actions(pot_states_dict)
-        elif "place_obj_on_counter" in self.current_ml_action:  
-            motion_goals = self.find_shared_counters(state, self.mlam)     
-            if len(motion_goals) == 0: 
-                motion_goals = am.place_obj_on_counter_actions(state)
+        # -----------------------------------------------------------
+        # 2. Parsing Logic
+        # -----------------------------------------------------------
+        raw_action = self.current_ml_action.strip()
+        target_index = -1
+        
+        # [수정] 문자열 슬라이싱 대신 정규표현식 사용
+        # 괄호 '('와 ')' 사이의 숫자를 찾습니다. 앞뒤 공백이나 끝의 점(.)이 있어도 문제없습니다.
+        match = self.action_regex.search(raw_action)
+        if match:
+            # 공백 제거 후 정수 변환
+            target_index = int(match.group(1).strip())
 
-        elif "start_cooking" in self.current_ml_action:
-            if pkg_resources.get_distribution("overcooked_ai").version == '1.1.0':
-                next_order = list(state.all_orders)[0]
-                soups_ready_to_cook_key = "{}_items".format(len(next_order.ingredients))
-                soups_ready_to_cook = pot_states_dict[soups_ready_to_cook_key]
-            elif pkg_resources.get_distribution("overcooked_ai").version == '0.0.1':
-                soups_ready_to_cook = pot_states_dict["onion"]['{}_items'.format(self.mdp.num_items_for_soup)] + pot_states_dict["tomato"]['{}_items'.format(self.mdp.num_items_for_soup)]
-            only_pot_states_ready_to_cook = defaultdict(list)
-            only_pot_states_ready_to_cook[soups_ready_to_cook_key] = soups_ready_to_cook
-            motion_goals = am.start_cooking_actions(only_pot_states_ready_to_cook)
-        elif "fill_dish_with_soup" in self.current_ml_action:
-            motion_goals = am.pickup_soup_with_dish_actions(pot_states_dict, only_nearly_ready=True)
-        elif "deliver_soup" in self.current_ml_action:
-            motion_goals = am.deliver_soup_actions()
-        elif "wait" in self.current_ml_action:
-            motion_goals = am.wait_actions(player)
-        else:
-            raise ValueError("Invalid action: {}".format(self.current_ml_action))
+        # -----------------------------------------------------------
+        # 3. Handling Indexed Actions (Target Specific Object)
+        # -----------------------------------------------------------
+        # print("self.global_id_mapping :", self.global_id_mapping)
+        # print("target_index :", target_index)
+        if target_index != -1:
+            target_list_key = None
+            
+            # 액션 이름에 따라 매핑 키 선택
+            if "pickup_onion" in raw_action:
+                target_list_key = "onion_dispenser"
+            elif "pickup_dish" in raw_action:
+                target_list_key = "dish_dispenser"
+            elif "pickup_tomato" in raw_action:
+                target_list_key = "tomato_dispenser"
+            elif "put_onion" in raw_action or "put_tomato" in raw_action or "fill_dish" in raw_action:
+                target_list_key = "pot"
+            elif "deliver" in raw_action:
+                target_list_key = "serving"
+            
+            # [수정됨] 저장해둔 global_id_mapping에서 좌표 리스트를 가져옴
+            
+            if target_list_key:
+                targets = self.global_id_mapping.get(target_list_key, [])
+                
+                if 0 <= target_index < len(targets):
+                    target_pos = targets[target_index]
+                    motion_goals = get_interact_states_from_pos(target_pos)
+                else:
+                    print(f"[Warning] Index {target_index} out of bounds for {raw_action}. Avail: {len(targets)}")
 
+        # -----------------------------------------------------------
+        # 4. Handling Non-Indexed Actions or Fallbacks
+        # -----------------------------------------------------------
+        if not motion_goals:
+            # 인덱스가 없는 경우 기존 로직(가까운 곳 찾기 등) 유지
+            if "place_obj_on_counter" in raw_action:
+                motion_goals = self.find_shared_counters(state, self.mlam)     
+                if len(motion_goals) == 0: 
+                    motion_goals = am.place_obj_on_counter_actions(state)
+            
+            elif "wait" in raw_action:
+                motion_goals = am.wait_actions(player)
+
+            # 인덱스 파싱 실패 혹은 LLM이 인덱스를 안 줬을 때의 폴백(Fallback)
+            elif target_index == -1:
+                pot_states_dict = self.mdp.get_pot_states(state)
+                counter_objects = self.mdp.get_counter_objects_dict(
+                    state, list(self.mdp.terrain_pos_dict["X"])
+                )
+                
+                if "pickup_onion" in raw_action:
+                    motion_goals = am.pickup_onion_actions_new(state, counter_objects, state.players_pos_and_or, self.agent_index)
+                elif "pickup_dish" in raw_action:
+                    motion_goals = am.pickup_dish_actions_new(state, counter_objects, state.players_pos_and_or, self.agent_index)
+                elif "put_onion" in raw_action:
+                    motion_goals = am.put_onion_in_pot_actions(pot_states_dict)
+                elif "fill_dish" in raw_action:
+                    motion_goals = am.pickup_soup_with_dish_actions(pot_states_dict, only_nearly_ready=True)
+                elif "deliver" in raw_action:
+                    motion_goals = am.deliver_soup_actions()
+                # 토마토 등 추가 가능
+                
+        # -----------------------------------------------------------
+        # 5. Validation
+        # -----------------------------------------------------------
         motion_goals = [
-            mg
-            for mg in motion_goals
+            mg for mg in motion_goals
             if self.mlam.motion_planner.is_valid_motion_start_goal_pair(
                 player.pos_and_or, mg
             )
         ]
 
         return motion_goals
-
+ 
     def choose_motion_goal(self, start_pos_and_or, motion_goals, state = None):
         """
         For each motion goal, consider the optimal motion plan that reaches the desired location.
@@ -927,14 +984,9 @@ class ProMediumLevelAgent(ProAgent):
         return best_goal, best_action
 
     def real_time_planner(self, start_pos_and_or, goal, state):   
-        terrain_matrix = {
-            'matrix': copy.deepcopy(self.mlam.mdp.terrain_mtx), 
-            'height': len(self.mlam.mdp.terrain_mtx), 
-            'width' : len(self.mlam.mdp.terrain_mtx[0]) 
-        }
         other_pos_and_or = state.players_pos_and_or[1 - self.agent_index]
-        action_plan, plan_cost = find_path(start_pos_and_or, other_pos_and_or, goal, terrain_matrix) 
-
+        # 미리 만들어둔 self.cached_terrain_matrix 사용
+        action_plan, plan_cost = find_path(start_pos_and_or, other_pos_and_or, goal, self.cached_terrain_matrix) 
         return action_plan, plan_cost
     
 class ProPlanningAgent(ProAgent):

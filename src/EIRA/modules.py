@@ -25,7 +25,7 @@ class Module(object):
     """
     def __init__(self, 
                  role_messages, 
-                 model="Qwen/Qwen2-VL-7B-Instruct-AWQ",
+                 model="Qwen/Qwen3-VL-8B-Instruct",
                  retrival_method="recent_k",
                  K=3,
                  api_base="http://192.168.0.19:8000/v1", # [추가] 기본값 설정
@@ -123,7 +123,7 @@ class Module(object):
                         messages=messages,
                         stop=stop,
                         temperature=0.0, 
-                        max_tokens = 512
+                        max_tokens = 350
                     )
                     #time.sleep(1) 
                 
