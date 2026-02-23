@@ -192,15 +192,15 @@ def draw_centered_text(window, text, sub_text=None, color=(0, 0, 0), bg_color=(2
         
     pygame.display.flip()
 
-def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=False, border_color=(0, 0, 0), border_width=2, alpha=180, y_offset=75):
+# 함수 인자에 padding=4 추가
+def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=False, border_color=(0, 0, 0), border_width=3, alpha=210, y_offset=75, padding=4):
     """
-    y_offset: 값이 클수록 플레이어 머리에서 멀어집니다 (더 위로 올라감).
+    말풍선을 그립니다. 
+    padding을 0으로 주면 content_surf(이모지)가 말풍선 영역을 꽉 채웁니다.
     """
-    padding = 4
     bubble_w = content_surf.get_width() + (padding * 2)
     bubble_h = content_surf.get_height() + (padding * 2)
     
-    # 🚨 y_offset 적용 (AI는 이 값을 작게 줘서 아래로 내릴 예정)
     bubble_x = target_x - (bubble_w / 2)
     bubble_y = target_y - (bubble_h / 2) - y_offset
     
@@ -209,19 +209,20 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
 
     temp_surf = pygame.Surface((int(bubble_w), int(bubble_h + 35)), pygame.SRCALPHA)
     
+    # 기본 테두리 색상 (검은색 지정 시 사고/계획에 따라 회색/검정 분기)
+    final_color = border_color
     if border_color == (0, 0, 0):
-        final_color, final_width = ((150, 150, 150) if is_thought else (0, 0, 0)), 2
-    else:
-        final_color, final_width = border_color, border_width
+        final_color = (150, 150, 150) if is_thought else (0, 0, 0)
 
-    # 1. 말풍선 배경 및 테두리
+    # 1. 하얀색 배경 칠하기
     pygame.draw.rect(temp_surf, (255, 255, 255), (0, 0, bubble_w, bubble_h), 0, border_radius=8)
-    pygame.draw.rect(temp_surf, final_color, (0, 0, bubble_w, bubble_h), final_width, border_radius=8)
+    
+    # 2. 테두리 그리기
+    pygame.draw.rect(temp_surf, final_color, (0, 0, bubble_w, bubble_h), border_width, border_radius=8)
 
-    # 2. 꼬리 그리기 (y_offset에 따라 꼬리 끝점 p1을 유동적으로 조절)
+    # 3. 꼬리 그리기
     mid_x, offset = bubble_w // 2, 6
     if tail_direction == "down":
-        # 꼬리 끝점 p1을 플레이어 머리 근처(y_offset보다 살짝 아래)로 고정
         p1 = (mid_x, bubble_h + (y_offset - 40)) 
         p2 = (mid_x - offset, bubble_h - 1)
         p3 = (mid_x + offset, bubble_h - 1)
@@ -231,12 +232,12 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
         p3 = (mid_x + offset, 5)
     
     pygame.draw.polygon(temp_surf, (255, 255, 255), [p1, p2, p3])
-    pygame.draw.polygon(temp_surf, final_color, [p1, p2, p3], final_width)
+    pygame.draw.polygon(temp_surf, final_color, [p1, p2, p3], border_width)
 
+    # 4. 내용물(이모지/텍스트) 얹기
     temp_surf.blit(content_surf, (padding, padding))
     temp_surf.set_alpha(alpha)
     window.blit(temp_surf, (bubble_x, bubble_y))
-
 def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
                 thought_msg=None, show_intention=True):
     if not window or not visualizer:
@@ -281,6 +282,7 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                     pygame.draw.rect(window, color, pygame.Rect(start_x + hx * tile_w, map_start_y + hy * tile_h, tile_w, tile_h), 4)
 
     # 5. [Speech Bubbles] 말풍선 렌더링 (Level 1, 2 전용)
+    # 5. [Speech Bubbles] 말풍선 렌더링 (Level 1, 2 전용)
     if thought_msg and visual_level in [1, 2]:
         raw_lines = thought_msg.split('\n')
         bubbles_to_draw = []
@@ -311,7 +313,7 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 if m: target_pid, is_thought, content_str = int(m.group(1)), True, line.split(':')[-1].strip().replace('"', '')
             
             if target_pid != -1:
-                # 🚨 자연어 말풍선은 테두리(blue, red) 없이 검정/회색으로 고정 (이전 규칙 반영 완료)
+                # 💡 visual_level 2와 동일한 테두리 기본값 로직
                 b_color, b_width = (0, 0, 0), 2 
                 display_text = content_str 
                 
@@ -327,8 +329,15 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 
                 has_two = (len(obj_info.get(target_char, [])) == 2) if target_char else False
 
+                # 💡 사물이 2개일 때 파랑/초록 테두리 색상 할당 (Level 1, 2 공통 하이라이팅)
+                if has_two and idx is not None:
+                    b_color = (0, 120, 255) if idx == 0 else (255, 60, 60)
+                    b_width = 3 # 눈에 잘 띄게 살짝 두껍게
+
                 if visual_level == 2:
                     display_text = transform_to_english_natural(target_skill, idx, is_thought, has_two)
+                    # 만약 자연어 모드에서는 무조건 검정/회색 테두리만 쓰고 싶으시다면 아래 주석을 해제하세요.
+                    b_color, b_width = (0, 0, 0), 2 
 
                 content_surf = None
                 if visual_level == 1:
@@ -336,9 +345,21 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                     temp = pygame.Surface((40, 40), pygame.SRCALPHA)
                     if found_icon:
                         for src in [visualizer.OBJECTS_IMG, visualizer.TERRAINS_IMG]:
-                            try: src.blit_on_surface(temp, (0, 0), found_icon); break
-                            except: continue
-                    content_surf = pygame.transform.scale(temp, (50, 50))
+                            try: 
+                                src.blit_on_surface(temp, (0, 0), found_icon)
+                                break
+                            except: 
+                                continue
+                    
+                    # 💡 투명 여백 잘라내기 (이모지 알맹이만 남김)
+                    bounding_rect = temp.get_bounding_rect()
+                    if bounding_rect.width > 0 and bounding_rect.height > 0:
+                        cropped_icon = temp.subsurface(bounding_rect).copy()
+                    else:
+                        cropped_icon = temp
+                        
+                    # 자른 이미지를 45x45로 꽉 차게 스케일링
+                    content_surf = pygame.transform.scale(cropped_icon, (45, 45))
                 else:
                     font_bubble = pygame.font.SysFont("arial", 18, bold=True)
                     content_surf = font_bubble.render(display_text, True, (0, 0, 0))
@@ -350,6 +371,7 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
             px, py = get_player_screen_pos(b['pid'], env, map_start_y, start_x, surf_width, surf_height)
             target_y_offset = 60 if b['pid'] == num_AI else 95
             
+            # 원본 draw_speech_bubble 함수 그대로 사용
             draw_speech_bubble(
                 window, b['surf'], px, py, 
                 is_thought=b['is_thought'], 

@@ -35,64 +35,50 @@ Output Format (STRICTLY FOLLOW THIS):
 
 Here are few examples:
 <example>
-Layout: <OnionD 0> [P0:6, P1:1], <OnionD 1> [P0:1, P1:6]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:2, P1:2]; <Serve 0> [P0:6, P1:3]; Scene 0: <Player 0> holds nothing at (5, 2). <Player 1> holds nothing at (1, 2). <Player 1> History: Moved: Start -> (1, 2). Kitchen states: <Pot 0> is empty.
-Analysis: Pot 0 is empty and requires ingredients. Both players are currently holding nothing. To maximize efficiency, I (Player 1) should move to my nearest onion dispenser (OnionD 0), while Player 0 should head to OnionD 1 to start the cooking process.
+Layout: <OnionD 0> [P0:6, P1:1], <OnionD 1> [P0:1, P1:6]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:2, P1:2]; <Serve 0> [P0:6, P1:3]; Scene 0: <Player 1> holds nothing at (5, 2). <Player 0> holds nothing at (1, 2). <Player 0> History: Moved: Start -> (1, 2). Kitchen states: <Pot 0> is empty.
+Analysis: A pot is empty and require ingredients. Both players are currently holding nothing. To maximize efficiency, each player should move to their nearest onion dispenser to begin the cooking process.
 Intention for Player 0: "pickup_onion(1)"
 Plan for Player 1: "pickup_onion(0)"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:1, P1:5]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:1, P1:4]; <Serve 0> [P0:6, P1:3]; Scene 60: <Player 0> holds one onion at (1, 2). <Player 1> holds nothing at (3, 2). <Player 1> History: Moved: (4, 2) -> (3, 2). Kitchen states: <Pot 0> starts cooking, ready in 15 steps.
-Analysis: Pot 0 is currently cooking and cannot accept more ingredients. Player 0 is holding an onion, which blocks them from performing other tasks. I (Player 1) should move to fetch a dish, while Player 0 should place their onion on a counter to free their hands.
-Intention for Player 0: "wait()"
-Plan for Player 1: "pickup_dish(0)"
+Analysis: Pot 0 is currently cooking and cannot accept more ingredients. Player 0 is holding an onion, which blocks them from performing other tasks like fetching a dish. To be efficient, Player 0 should place the onion on a nearby counter to free their hand, while Player 1 moves to get a dish. 
+Intention for Player 1: "pickup_dish(0)"
+Plan for Player 0: "place_obj_on_counter()"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:6, P1:1], <OnionD 1> [P0:1, P1:6]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:2, P1:2]; <Serve 0> [P0:6, P1:3]; Scene 12: <Player 0> holds nothing at (3, 2). <Player 1> holds one onion at (2, 2). <Player 1> History: Moved: (1, 2) -> (2, 2). Kitchen states: <Pot 0> has 1 onion.
-Analysis: Pot 0 needs more ingredients. I (Player 1) am holding an onion and am close to the pot, so I will deposit it. Player 0 is empty-handed and should fetch the next onion from OnionD 1 to maintain the supply chain.
-Intention for Player 0: "pickup_onion(1)"
-Plan for Player 1: "put_onion_in_pot(0)"
+Analysis: Pot 0 needs more ingredients. Player 1 holds an onion and is close to Pot 0, so they will deposit it. Player 0 is empty-handed and should fetch the next onion from their nearest dispenser (OnionD 1) to maintain the supply chain.
+Intention for Player 1: "put_onion_in_pot(0)"
+Plan for Player 0: "pickup_onion(1)"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:6, P1:2]; <DishD 0> [P0:1, P1:5]; <Pot 0> [P0:2, P1:2]; <Serve 0> [P0:6, P1:3]; Scene 55: <Player 0> holds nothing at (2, 2). <Player 1> holds nothing at (4, 2). <Player 1> History: Moved: (4, 1) -> (4, 2). Kitchen states: <Pot 0> starts cooking, ready in 2 steps.
-Analysis: Pot 0 is about to finish cooking. We need a dish immediately to serve. Since Player 0 is 1 step away from DishD 0 (closer than my 5 steps), they should pick up the dish. I (Player 1) will head to the onion dispenser to prepare for the next batch.
-Intention for Player 0: "pickup_dish(0)"
-Plan for Player 1: "pickup_onion(0)"
+Analysis: Pot 0 is about to finish cooking (2 steps remaining). We need a dish immediately to serve the soup. Player 0 is closest to DishD 0. Player 1 is far from dishes. Player 0 should pick up a dish to be ready to serve.
+Intention for Player 1: "pickup_onion(0)"
+Plan for Player 0: "pickup_dish(0)"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:2, P1:2]; <DishD 0> [P0:1, P1:5]; <Pot 0> [P0:2, P1:2]; <Serve 0> [P0:3, P1:3]; Scene 78: <Player 0> holds one dish at (2, 2). <Player 1> holds nothing at (3, 2). <Player 1> History: Moved: (3, 3) -> (3, 2). Kitchen states: <Pot 0> is empty.
-Analysis: The soup was just delivered and Pot 0 is empty. We need to restart the cycle. Player 0 is holding an unnecessary dish that prevents them from picking up onions. While Player 0 clears their hand by placing the dish on a counter, I (Player 1) will start fetching onions.
-Intention for Player 0: "place_obj_on_counter()"
-Plan for Player 1: "pickup_onion(0)"
+Analysis: The soup has just been delivered, and Pot 0 is now empty. We need to restart the cooking cycle by adding onions. Player 0 is holding a dish, which is currently unnecessary and prevents picking up onions. Player 0 must discard the dish on a counter to free their hand and help gather ingredients. Player 1 is free to start fetching onions.
+Intention for Player 1: "pickup_onion(0)"
+Plan for Player 0: "place_obj_on_counter()"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:1, P1:5]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:2, P1:3]; <Serve 0> [P0:6, P1:3]; Scene 95: <Player 0> holds one dish at (2, 2). <Player 1> holds one onion at (3, 2). <Player 1> History: Moved: (4, 2) -> (3, 2). Kitchen states: <Pot 0> has already cooked the soup.
-Analysis: The soup is ready. Player 0 is already holding a dish and is next to the pot, so they will plate the soup. I (Player 1) have the onion for the next batch, but I must wait for Player 0 to empty the pot first.
-Intention for Player 0: "fill_dish_with_soup(0)"
-Plan for Player 1: "wait()"
+Analysis: The soup in Pot 0 is fully cooked and ready to be served. Player 0 is holding a dish and is adjacent to the pot, so the immediate next step is to plate the soup. Player 1 is holding an onion for the next batch but must wait for Player 0 to empty the pot.
+Intention for Player 1: "wait()"
+Plan for Player 0: "fill_dish_with_soup(0)"
 </example>
 
 <example>
 Layout: <OnionD 0> [P0:6, P1:1]; <DishD 0> [P0:2, P1:5]; <Pot 0> [P0:3, P1:3]; <Serve 0> [P0:6, P1:3]; Scene 42: <Player 0> holds nothing at (2, 2). <Player 1> holds nothing at (1, 1). <Player 1> History: Moved: (1, 2) -> (1, 1). Kitchen states: <Pot 0> has 2 onions.
-Analysis: Pot 0 needs exactly one more onion. I (Player 1) am positioned right next to OnionD 0 and will pick up the final onion. Since the pot will be busy cooking soon, Player 0 should move toward DishD 0 to prepare for serving.
-Intention for Player 0: "pickup_dish(0)"
-Plan for Player 1: "pickup_onion(0)"
-</example>
-
-<example>
-Layout: <OnionD 0> [P0:1, P1:5]; <DishD 0> [P0:6, P1:1]; <Pot 0> [P0:3, P1:4]; <Serve 0> [P0:5, P1:3]; Scene 24: <Player 0> holds nothing at (1, 2). <Player 1> holds nothing at (5, 2). <Player 1> History: Moved: (4, 2) -> (5, 2). Kitchen states: <Pot 0> has 2 onions.
-Analysis: Pot 0 currently has 2 onions and needs exactly one more to begin cooking. Player 0 is empty-handed and positioned right next to the onion dispenser (distance 1) so they will naturally pick up the final onion. Since the cooking process will start shortly and I (Player 1) am right next to the dish dispenser (DishD 0), I should prepare for the serving phase by grabbing a dish.
-Intention for Player 0: "pickup_onion(0)"
-Plan for Player 1: "pickup_dish(0)"
-</example>
-
-<example>
-Layout: <OnionD 0> [P0:2, P1:4]; <DishD 0> [P0:5, P1:2]; <Pot 0> [P0:3, P1:1]; <Serve 0> [P0:6, P1:3]; Scene 88: <Player 0> holds one onion at (2, 2). <Player 1> holds one dish at (4, 2). <Player 1> History: Moved: (5, 2) -> (4, 2). Kitchen states: <Pot 0> has already cooked the soup.
-Analysis: The soup in Pot 0 is fully cooked and ready to be served. I (Player 1) am already holding a dish and am adjacent to the pot, so my immediate next action is to plate the soup. Player 0 is holding an onion for the next cooking cycle but must wait until I empty the pot before they can deposit their ingredient.
-Intention for Player 0: "wait()"
-Plan for Player 1: "fill_dish_with_soup(0)"
+Analysis: Pot 0 needs exactly one more onion. Player 1 is positioned right next to OnionD 0 (dist 1) and is empty-handed, so they will undoubtedly pick up the final onion to start the cooking process. Since the pot will be busy cooking shortly, Player 0 should not get an onion but instead move to DishD 0 to prepare a dish for serving.
+Intention for Player 1: "pickup_onion(0)"
+Plan for Player 0: "pickup_dish(0)"
 </example>
