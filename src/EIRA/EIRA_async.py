@@ -485,7 +485,7 @@ class ProMediumLevelAgent(ProAgent):
             with self.lock:
                 self.is_thinking = False
 
-    def action(self, state):
+    def action(self, state, partner_action=None):
         """
         [Modified] 3스텝 제자리 멈춤(Stuck) 감지 로직 적용
         """
@@ -577,10 +577,11 @@ class ProMediumLevelAgent(ProAgent):
 
         # 3. Low-Level Motion Planning (이동)
         if self.current_ml_action is None:
-            # 생각 중일 때는 안전하게 제자리에 멈춰있습니다.
+            # [수정] 생각 중일 때 상하좌우 중 랜덤으로 이동
+            random_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
             if self.overcooked_version == '1.1.0':
-                return Action.STAY, {}
-            return Action.STAY
+                return random_action, {}
+            return random_action
 
         # 행동 실행
         self.trace = True 
@@ -591,8 +592,8 @@ class ProMediumLevelAgent(ProAgent):
             self.time_to_wait -= 1
             if self.time_to_wait <= 0:
                 self.current_ml_action = None
-            lis_actions = self.mdp.get_valid_actions(state.players[self.agent_index])
-            chosen_action = lis_actions[np.random.randint(0,len(lis_actions))]
+            # [수정] 대기(wait)하는 동안 상하좌우 중 랜덤으로 이동
+            chosen_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
         else:
             possible_motion_goals = self.find_motion_goals(state)    
             current_motion_goal, chosen_action = self.choose_motion_goal(
@@ -603,8 +604,42 @@ class ProMediumLevelAgent(ProAgent):
             if chosen_action is None:
                  self.current_ml_action = "wait(1)"
                  self.time_to_wait = 1
-                 chosen_action = Action.STAY
+                 # [수정] 경로를 못 찾아 대기할 때도 랜덤 이동
+                 chosen_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
 
+        # ----------------------------------------------------
+        # 4. [NEW] 완벽한 사전 충돌 방지 로직 (Proactive Avoidance)
+        # ----------------------------------------------------
+        if isinstance(chosen_action, tuple) and chosen_action != Action.STAY:
+            my_pos = state.players[self.agent_index].position
+            partner_pos = state.players[1 - self.agent_index].position
+
+            # 1. 나의 1프레임 뒤 미래 좌표
+            my_next_pos = (my_pos[0] + chosen_action[0], my_pos[1] + chosen_action[1])
+            
+            # 2. 파트너의 행동이 전달되었고, 이동하는 행동일 경우
+            if partner_action is not None and isinstance(partner_action, tuple) and partner_action != Action.STAY:
+                partner_next_pos = (partner_pos[0] + partner_action[0], partner_pos[1] + partner_action[1])
+                
+                # [상황 A] 둘이 완전히 똑같은 타일을 향해 동시에 걸어가는 경우
+                if my_next_pos == partner_next_pos:
+                    chosen_action = Action.STAY
+                
+                # [상황 B] 서로 자리를 바꾸려고 크로스(Cross)하는 경우 (오버쿡드에서 충돌로 처리됨)
+                elif my_next_pos == partner_pos and partner_next_pos == my_pos:
+                    chosen_action = Action.STAY
+                    
+                # [상황 C] 파트너가 움직여서 도달할 미래의 자리에 내가 돌진하는 경우
+                elif my_next_pos == partner_next_pos:
+                    chosen_action = Action.STAY
+            
+            # 3. 파트너가 가만히 있거나(STAY), 요리 중(interact)이거나, 행동을 모를 때
+            else:
+                # 내가 파트너가 현재 서 있는 자리로 돌진하는 경우
+                if my_next_pos == partner_pos:
+                    chosen_action = Action.STAY
+
+        # 기존 코드 유지
         self.prev_state = state
         self.current_ml_action_steps += 1
 
@@ -612,7 +647,7 @@ class ProMediumLevelAgent(ProAgent):
             return chosen_action, {}
         elif self.overcooked_version == '0.0.1':
             return chosen_action
-
+        
     def parse_ml_action(self, response, agent_index): 
         if agent_index == 0: 
             pattern = r'layer\s*0: (.+)'

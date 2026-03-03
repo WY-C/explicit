@@ -1,16 +1,23 @@
 """
 =todo=
 
-cramped_room 프롬프트 수정
 2. Instruction, 연습공간 - 싱글 플레이? 협동 플레이?
 3. 벤치마크 시스템 구축 - Manhatten vs 절대 좌표 비교 - 만들어봤긴한데 서버 고치고 다시 해봐야 할 듯.
-생각하는 동안 / 기다리는 동안은 상하좌우 랜덤행동으로
+로그따기
+counter_circuit의 경우에서, 왼쪽 / 오른쪽이 아님. 다시 프롬프팅하기.
+
+highlight에 물음표 넣기
+실시간성 있는 거 / 없는 거 구현 - 비실시간이 사람만?
+
+맵순서
+
 
 =실험 설계=
     =정해야 할 질문들=
         맵3개시킬지 4개 시킬지
+    instruction에서 추론근거 설명하기
     1 experiment안에 여러개의 block (맵 1개가 1개의 block), 각 block마다 쉬는시간.
-    맵 순서 -> 쉬운거부터 어려운 순으로 - cramped_room -> asymmetric_advantages, coordination_ring, counter_circuit
+    맵 순서 -> 랜덤
     의도 표시는 Balanced latin square 사용
     law Log 따두기 (필요한 것: 어떤 의도 표현 방식인지, 각 timestep, object 상태, player 상태, 행동, reward)
     사후 설문 - Cognitive load - nasa xls(매번) + 선호도(block당), 얼마나 도움이 되었는가(매번) + agency: agent를 내 마음대로 움직일 수 있었다.
@@ -18,7 +25,12 @@ cramped_room 프롬프트 수정
         1block마다 사후 설문 받기
 
 =완성사항=
--2월 마지막 주-
+#cramped_room 프롬프트 수정
+#생각하는 동안 / 기다리는 동안은 상하좌우 랜덤행동으로
+#충돌구현(EIRA가 움직였을 때 같은 위치로 이동한다면, 한번 wait하기)
+#혼자 말하는 것처럼 수정하기.
+#색깔 지우기 / left, right onion으로 수정
+#object에 bold
 #7. 자연어, 이모지 좀 더 고민해보기
 #말풍선에 투명도 추가하기
 #정보에 service location 위치도 추가하기
@@ -155,6 +167,8 @@ def main(variant):
     cook_time = variant['cook_time']
     visual_level = variant['visual_level']
     show_intention = variant['show_intention']
+    # 💡 이전 요청에 따라 variant['is_async'] 또는 variant['async'] 확인 필요
+    async_mode = variant.get('is_async', variant.get('async', True))
     
     # [핵심] 글로벌 게임 스텝 주기
     game_timestep = variant['timestep'] 
@@ -179,6 +193,7 @@ def main(variant):
     rprint(f"\n[bold green]=== Global Timestep: {game_timestep}ms (AI & Human Sync) ===[/bold green]\n")
     start_time = time.time()
     results = []
+    
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}"), 
         BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), 
@@ -204,7 +219,7 @@ def main(variant):
             team.reset(); env.reset()
             r_total = 0
 
-            # 5-1. [WarmUp] (생략 가능하나 첫 프레임 딜레이 방지용으로 유지)
+            # 5-1. [WarmUp]
             if render and mode == 'exp':
                 for idx, agent in enumerate(agents_list):
                     if hasattr(agent, 'generate_ml_action'):
@@ -215,49 +230,77 @@ def main(variant):
                     vu.draw_centered_text(window_surface, "Game starts in...", str(i), color=(255, 0, 0))
                     pygame.display.flip()
                     start_ticks = pygame.time.get_ticks()
-                    while pygame.time.get_ticks() - start_ticks < 1000: # 1초(1000ms) 동안 반복
-                        pygame.event.pump() # OS 이벤트 큐를 비워주어 창이 얼어붙지 않게 숨통을 트여줌
-                        pygame.time.delay(10) # CPU 과부하 방지용 짧은 휴식
+                    while pygame.time.get_ticks() - start_ticks < 1000:
+                        pygame.event.pump()
+                        pygame.time.delay(10)
 
-            # 5-2. Step 루프
+            # 5-2. Step 루프 (정상 들여쓰기 범위 내부)
             clock = pygame.time.Clock()
             if mode == 'exp' and render:
                 for t in range(1, horizon + 1):
                     step_start_time = pygame.time.get_ticks()
-                    
-                    chosen_action = (0, 0)
+                    human_chosen_action = Action.STAY
                     action_chosen = False
-                    
-                    # --- 설정된 timestep 동안 입력 감지 ---
-                    while pygame.time.get_ticks() - step_start_time < game_timestep:
-                        clock.tick(60)
-                        for event in pygame.event.get():
-                            if event.type == pygame.QUIT: pygame.quit(); return
-                            if event.type == pygame.KEYDOWN and not action_chosen:
-                                key = event.key
-                                action = None
-                                if key == pygame.K_UP: action = (0, -1)
-                                elif key == pygame.K_DOWN: action = (0, 1)
-                                elif key == pygame.K_LEFT: action = (-1, 0)
-                                elif key == pygame.K_RIGHT: action = (1, 0)
-                                elif key == pygame.K_SPACE: action = Action.INTERACT
-                                if action: chosen_action = action; action_chosen = True 
-                    
-                    # --- 행동 실행 (모든 에이전트가 매 timestep마다 action 호출) ---
+
+                    # --- 모드 분기 1: 실시간 ---
+                    if async_mode:
+                        while pygame.time.get_ticks() - step_start_time < game_timestep:
+                            clock.tick(60)
+                            for event in pygame.event.get():
+                                if event.type == pygame.QUIT: pygame.quit(); return
+                                if event.type == pygame.KEYDOWN and not action_chosen:
+                                    key = event.key
+                                    action = None
+                                    if key == pygame.K_UP: action = (0, -1)
+                                    elif key == pygame.K_DOWN: action = (0, 1)
+                                    elif key == pygame.K_LEFT: action = (-1, 0)
+                                    elif key == pygame.K_RIGHT: action = (1, 0)
+                                    elif key == pygame.K_SPACE: action = Action.INTERACT
+                                    if action: 
+                                        human_chosen_action = action
+                                        action_chosen = True
+
+                    # --- 모드 분기 2: 턴제 ---
+                    else:
+                        thought_idx, thought_msg = get_combined_thought(agents_list)
+                        vu.render_game(window_surface, visualizer, env, t, horizon, r_total, 
+                                       thought_idx, visual_level, layout_dict, thought_msg, show_intention)
+                        
+                        while not action_chosen:
+                            for event in pygame.event.get():
+                                if event.type == pygame.QUIT: pygame.quit(); return
+                                if event.type == pygame.KEYDOWN:
+                                    key = event.key
+                                    action = None
+                                    if key == pygame.K_UP: action = (0, -1)
+                                    elif key == pygame.K_DOWN: action = (0, 1)
+                                    elif key == pygame.K_LEFT: action = (-1, 0)
+                                    elif key == pygame.K_RIGHT: action = (1, 0)
+                                    elif key == pygame.K_SPACE: action = Action.INTERACT
+                                    if action:
+                                        human_chosen_action = action
+                                        action_chosen = True
+                            pygame.time.delay(10)
+
+                    # --- 행동 실행 ---
                     s_t = env.state
                     actions_t = []
                     for agent in agents_list:
                         if isinstance(agent, HumanAgent):
-                            agent.set_next_action(chosen_action)
-                        actions_t.append(agent.action(s_t)) # AI도 여기서 즉시 action() 수행
+                            agent.set_next_action(human_chosen_action)
+                            actions_t.append(agent.action(s_t))
+                        else:
+                            # AI에게 사람의 액션을 전달하여 충돌 방지 로직 수행
+                            actions_t.append(agent.action(s_t, partner_action=human_chosen_action))
 
                     obs, reward, done, env_info = env.step(tuple(actions_t))
                     r_total += reward
                     
-                    # 렌더링
-                    thought_idx, thought_msg = get_combined_thought(agents_list)
-                    vu.render_game(window_surface, visualizer, env, t, horizon, r_total, 
-                                   thought_idx, visual_level, layout_dict, thought_msg, show_intention)
+                    # 실시간 모드일 때만 루프 끝에서 업데이트 (턴제는 상단에서 처리)
+                    if async_mode:
+                        thought_idx, thought_msg = get_combined_thought(agents_list)
+                        vu.render_game(window_surface, visualizer, env, t, horizon, r_total, 
+                                       thought_idx, visual_level, layout_dict, thought_msg, show_intention)
                     
                     if done: break
             
@@ -304,14 +347,17 @@ if __name__ == '__main__':
     # Basic Parsers
     parser.add_argument('--layout', '-l', type=str, default='cramped_room', 
                         choices=['cramped_room', 'asymmetric_advantages', 'coordination_ring', 'forced_coordination', 'counter_circuit'])
-    parser.add_argument('--p0',  type=str, default='ProAgent', help='Algorithm for P0')
-    parser.add_argument('--p1', type=str, default='Human', help='Algorithm for P1')
+    parser.add_argument('--p0',  type=str, default='Human', help='Algorithm for P0')
+    parser.add_argument('--p1', type=str, default='EIRAAsync', help='Algorithm for P1')
     parser.add_argument('--horizon', type=int, default=400, help='Horizon steps')
     parser.add_argument('--cook_time', type=int, default=20)
     parser.add_argument('--episode', type=int, default=1, help='Number of episodes')
     parser.add_argument('--render', type=boolean_argument, default=True, help='Visualization on/off')
     parser.add_argument('--visual_level', type=int, default=2, help='0: baseline, 1: emoji, 2: NL, 3: highlight')
     parser.add_argument('--show_intention', type=boolean_argument, default=True, help='Show Intention bubble')
+    # [수정] --async 인자 추가 (예약어 충돌 방지를 위해 dest 사용)
+    parser.add_argument('--async', dest='async', type=boolean_argument, default=True, 
+                        help='True: Real-time, False: Turn-based')
 
     # [NEW] Global Timestep (Default 400ms = Same speed as human)
     parser.add_argument('--timestep', type=int, default=400, help='Global timestep in ms')

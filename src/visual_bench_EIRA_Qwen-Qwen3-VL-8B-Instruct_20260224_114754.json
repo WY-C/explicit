@@ -1,0 +1,30 @@
+{
+    "config": {
+        "target_agent": "EIRA",
+        "layouts": [
+            "cramped_room"
+        ],
+        "horizon": 400,
+        "visual_level": 1,
+        "gpt_model": "Qwen/Qwen3-VL-8B-Instruct",
+        "prompt_level": "l3-aip",
+        "belief_revision": false,
+        "retrival_method": "recent_k",
+        "K": 1
+    },
+    "results": {
+        "cramped_room": {
+            "FCP": {
+                "mean": 156.0,
+                "std": 42.708313008125245,
+                "scores": [
+                    80.0,
+                    200.0,
+                    140.0,
+                    180.0,
+                    180.0
+                ]
+            }
+        }
+    }
+}

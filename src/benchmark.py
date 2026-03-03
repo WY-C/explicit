@@ -48,7 +48,8 @@ def run_benchmark(args):
     # 1. 설정
     target_agent_name = args.target_agent
     layouts = args.layouts 
-    opponents = ['SP', 'PBT', 'MEP', 'FCP', 'COLE'] # 벤치마크 대상
+    #opponents = ['SP', 'PBT', 'MEP', 'FCP', 'COLE'] # 벤치마크 대상
+    opponents = ['FCP'] # 벤치마크 대상
     num_episodes = 5
     horizon = args.horizon
     visual_level = args.visual_level
@@ -95,11 +96,11 @@ def run_benchmark(args):
                     
                     try:
                         # 에이전트 생성
-                        agent0 = make_agent(target_agent_name, mdp, layout, 
+                        agent0 = make_agent(opponent_name, mdp, layout, seed_id=ep)
+                        agent1 = make_agent(target_agent_name, mdp, layout, 
                                           model=args.gpt_model, prompt_level=args.prompt_level,
                                           belief_revision=args.belief_revision, 
                                           retrival_method=args.retrival_method, K=args.K)
-                        agent1 = make_agent(opponent_name, mdp, layout, seed_id=ep)
 
                         agents_list = [agent0, agent1]
                         team = AgentGroup(*agents_list)
@@ -181,9 +182,9 @@ def run_benchmark(args):
 
 if __name__ == '__main__':
     parser = ArgumentParser()
-    parser.add_argument('--target_agent', type=str, default='ProAgent')
+    parser.add_argument('--target_agent', type=str, default='EIRA')
     parser.add_argument('--layouts', nargs='+', default=['cramped_room'])
-    parser.add_argument('--horizon', type=int, default=400)
+    parser.add_argument('--horizon', type=int, default=4000)
     
     # 시각화 레벨 (0: 맵만, 1: 아이콘, 2: 텍스트)
     parser.add_argument('--visual_level', type=int, default=1, help='0:Map, 1:Emoji, 2:Text')
