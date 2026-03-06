@@ -1,3 +1,4 @@
+#todo 맵에도 LATIN SQUARE 적용
 import pygame
 import time
 import sys
