@@ -75,7 +75,7 @@ class ProMediumLevelAgent(ProAgent):
             mlam,
             layout,
             model = "Qwen/Qwen3-VL-8B-Instruct",
-            prompt_level='l2-ap', 
+            prompt_level='l3-aip', 
             belief_revision=False,
             retrival_method="recent_k",
             K=3,
@@ -142,6 +142,9 @@ class ProMediumLevelAgent(ProAgent):
         self.thinking_start_time = 0.0  # 생각 시작 시간
         self.thinking_request_id = 0    # 요청 고유 ID (오래된 요청 무시용)
         self.TIMEOUT_SECONDS = 4.0      # 3초 타임아웃 설정
+
+        self.is_llm_called_this_step = False
+        self.last_llm_response_time = 0.0
 
 
     def set_mdp(self, mdp):
@@ -487,104 +490,110 @@ class ProMediumLevelAgent(ProAgent):
 
     def action(self, state, partner_action=None):
         """
-        [Modified] 3스텝 제자리 멈춤(Stuck) 감지 로직 적용
+        [Final Logic] 
+        1. Stuck 감지: 3스텝 이상 제자리일 경우 현재 계획 강제 취소.
+        2. 공평한 시간 비용(Penalty): 비실시간(Sync) 모드에서 '생각 시작 시점' 기준 페널티 부여.
+        3. 랜덤 이동: 생각 중이거나 페널티 대기 중일 때 상하좌우 랜덤 이동 수행.
+        4. 사전 충돌 방지: 파트너의 다음 수와 내 다음 수가 겹치면 STAY로 양보.
         """
+        self.is_llm_called_this_step = False
+        self.last_llm_response_time = 0.0
+        
+        current_step = state.timestep
         current_pos = state.players[self.agent_index].position
 
-        # 1. 현재 수행 중인 High-Level Action 관리
+        # ==========================================
+        # 🏁 [1] High-Level Action 상태 관리 및 Stuck 감지
+        # ==========================================
         if self.current_ml_action is not None:
-            
-            # --- [NEW] 제자리 멈춤 감지 (위치가 그대로면 카운트 증가) ---
+            # 제자리 멈춤(Stuck) 감지 로직
             if self.last_pos_for_stuck == current_pos:
                 self.stuck_steps += 1
             else:
-                self.stuck_steps = 0  # 한 칸이라도 움직이면 초기화
+                self.stuck_steps = 0
             
             self.last_pos_for_stuck = current_pos
 
-            # 🚨 3스텝 동안 제자리에 멈춰있고, 의도한 'wait' 행동이 아니라면 강제 취소!
+            # 3스텝 이상 끼었을 경우 강제 재사고 유도
             if self.stuck_steps >= 3 and "wait" not in self.current_ml_action:
-                print(f"\n[Stuck] 제자리에 3스텝 이상 막혀서 '{self.current_ml_action}' 강제 취소! 다시 생각합니다.")
-                self.trace = False
+                print(f"\n[Stuck Avoidance] '{self.current_ml_action}' Cancelled -> Re-planning...")
                 self.current_ml_action = None
                 self.stuck_steps = 0
-                with self.lock:
-                    self.is_thinking = False
+                with self.lock: self.is_thinking = False
                     
             elif self.check_current_ml_action_done(state):
                 self.generate_success_feedback(state)
                 self.current_ml_action = None 
-                self.stuck_steps = 0 # 완료 시 초기화
                 
             elif not self.validate_current_ml_action(state):
-                self.trace = False
+                # 환경 변화로 인해 계획이 무효화된 경우
                 self.current_ml_action = None
-                self.stuck_steps = 0 # 실패 시 초기화
-                with self.lock:
-                    self.is_thinking = False
+                with self.lock: self.is_thinking = False
 
-        # 2. 생각(Thinking) 관리 로직 (타임아웃 & 재요청 포함)
+        # ==========================================
+        # 🧠 [2] 비동기 추론 관리 및 비실시간 페널티 제어
+        # ==========================================
         if self.current_ml_action is None:
             with self.lock:
                 current_time = time.time()
                 
-                # (A) 결과 도착 확인 (성공)
+                # (A) LLM 응답 도착 및 페널티 조건 확인
                 if self.next_ml_action is not None:
-                    self.current_ml_action = self.next_ml_action
-                    self.next_ml_action = None
-                    self.current_ml_action_steps = 0
+                    # 💡 getattr를 사용하여 async_mode가 없더라도 기본적으로 True(실시간)로 간주해 에러 방지
+                    is_async = getattr(self, 'async_mode', True)
                     
-                    # 🚨 [누락됐던 부분 추가] wait 액션일 경우 대기 시간을 파싱해서 설정해줍니다.
-                    if "wait" in self.current_ml_action:
-                        import re
-                        nums = re.findall(r'\d+', self.current_ml_action)
-                        self.time_to_wait = int(nums[0]) if nums else 1
+                    if not is_async: 
+                        # 비실시간(Sync) 환경 전용 페널티 로직
+                        required_steps = getattr(self, 'latest_llm_required_steps', 1)
+                        target_release_step = self.thinking_start_step + required_steps
+                        
+                        if current_step >= target_release_step:
+                            self.current_ml_action = self.next_ml_action
+                            self.next_ml_action = None
+                            self.is_thinking = False
+                        else:
+                            #print(f"\n[Sync Penalty] Current Step: {current_step}, Target Release Step: {target_release_step}. Waiting...")
+                            pass
+                    else:
+                        # 실시간(Async) 환경은 즉시 실행
+                        self.current_ml_action = self.next_ml_action
+                        self.next_ml_action = None
+                        self.is_thinking = False
 
-                    if hasattr(self, 'last_llm_timing'):
-                        print(f" >> LLM Timing: {json.dumps(self.last_llm_timing)}")
-                
-                # (B) [핵심] 타임아웃 체크 및 재요청
-                # 생각 중인데 3초가 지났다면? -> 기존 것 버리고 새로 요청
+                # (B) 타임아웃 체크 및 재요청 (4초 이상 무응답 시)
                 elif self.is_thinking and (current_time - self.thinking_start_time > self.TIMEOUT_SECONDS):
-                    print(f"\n[Timeout] LLM took > {self.TIMEOUT_SECONDS}s. Retrying with NEW state...")
-                    
-                    # 1. ID 증가 (이전 스레드의 결과가 나중에 와도 무시됨)
+                    print(f"\n[Timeout] Retrying with NEW state...")
                     self.thinking_request_id += 1
-                    
-                    # 2. 타이머 리셋
                     self.thinking_start_time = current_time
-                    
-                    # 3. 새 스레드 시작 (현재의 최신 state 사용)
-                    safe_data = state.to_dict()
-                    req_id = self.thinking_request_id
-                    
-                    # 이전 스레드는 강제 종료할 수 없으므로 백그라운드에서 돌다가 _thinking_process의 ID 체크에서 걸러집니다.
-                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data, req_id))
+                    # 새로운 생각 시작 스텝 업데이트 (재시도 시점 기준)
+                    self.thinking_start_step = current_step 
+                    self.think_thread = threading.Thread(target=self._thinking_process, args=(state.to_dict(), self.thinking_request_id))
                     self.think_thread.start()
 
-                # (C) 생각이 안 돌고 있다면 -> 최초 생각 시작
+                # (C) 최초 생각 시작
                 elif not self.is_thinking:
                     self.is_thinking = True
                     self.thinking_start_time = current_time
-                    self.thinking_request_id += 1 # 새 ID 발급
+                    self.thinking_request_id += 1
                     
-                    safe_data = state.to_dict()
-                    req_id = self.thinking_request_id
+                    # 💡 [핵심] 생각이 시작된 '스텝 번호'를 기록
+                    self.thinking_start_step = current_step
                     
-                    self.think_thread = threading.Thread(target=self._thinking_process, args=(safe_data, req_id))
+                    self.think_thread = threading.Thread(target=self._thinking_process, args=(state.to_dict(), self.thinking_request_id))
                     self.think_thread.start()
-                    
 
-        # 3. Low-Level Motion Planning (이동)
+        # ==========================================
+        # 🎲 [3] 행동 결정 (생각/페널티 중일 때 랜덤 이동)
+        # ==========================================
+        # 계획이 아직 확정되지 않은 모든 상태(추론 중, 페널티 대기 중)
         if self.current_ml_action is None:
-            # [수정] 생각 중일 때 상하좌우 중 랜덤으로 이동
-            random_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
+            # 💡 상하좌우 중 랜덤 선택하여 활발한 움직임 연출
+            random_dir = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
             if self.overcooked_version == '1.1.0':
-                return random_action, {}
-            return random_action
+                return random_dir, {}
+            return random_dir
 
-        # 행동 실행
-        self.trace = True 
+        # 계획된 행동(Plan) 수행
         chosen_action = Action.STAY
         
         if "wait" in self.current_ml_action:
@@ -592,62 +601,51 @@ class ProMediumLevelAgent(ProAgent):
             self.time_to_wait -= 1
             if self.time_to_wait <= 0:
                 self.current_ml_action = None
-            # [수정] 대기(wait)하는 동안 상하좌우 중 랜덤으로 이동
+            # wait 행동 수행 중에도 제자리 랜덤 이동으로 심심하지 않게 표현
             chosen_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
         else:
+            # Low-level Motion Planning을 통한 최단 경로 이동
             possible_motion_goals = self.find_motion_goals(state)    
             current_motion_goal, chosen_action = self.choose_motion_goal(
                 state.players_pos_and_or[self.agent_index], 
                 possible_motion_goals, 
                 state
             )
+            # 경로를 찾을 수 없는 경우에도 랜덤 이동으로 탈출 시도
             if chosen_action is None:
-                 self.current_ml_action = "wait(1)"
-                 self.time_to_wait = 1
-                 # [수정] 경로를 못 찾아 대기할 때도 랜덤 이동
                  chosen_action = random.choice([Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST])
 
-        # ----------------------------------------------------
-        # 4. [NEW] 완벽한 사전 충돌 방지 로직 (Proactive Avoidance)
-        # ----------------------------------------------------
+        # ==========================================
+        # 🛡️ [4] 사전 충돌 방지 로직 (Proactive Avoidance)
+        # ==========================================
         if isinstance(chosen_action, tuple) and chosen_action != Action.STAY:
             my_pos = state.players[self.agent_index].position
             partner_pos = state.players[1 - self.agent_index].position
-
-            # 1. 나의 1프레임 뒤 미래 좌표
             my_next_pos = (my_pos[0] + chosen_action[0], my_pos[1] + chosen_action[1])
             
-            # 2. 파트너의 행동이 전달되었고, 이동하는 행동일 경우
+            # 파트너의 행동 정보가 실시간으로 들어오는 경우
             if partner_action is not None and isinstance(partner_action, tuple) and partner_action != Action.STAY:
                 partner_next_pos = (partner_pos[0] + partner_action[0], partner_pos[1] + partner_action[1])
                 
-                # [상황 A] 둘이 완전히 똑같은 타일을 향해 동시에 걸어가는 경우
-                if my_next_pos == partner_next_pos:
+                # Case A: 동일 타일 진입 / Case B: 서로의 위치를 크로스하여 교환하려는 경우
+                if my_next_pos == partner_next_pos: 
                     chosen_action = Action.STAY
-                
-                # [상황 B] 서로 자리를 바꾸려고 크로스(Cross)하는 경우 (오버쿡드에서 충돌로 처리됨)
-                elif my_next_pos == partner_pos and partner_next_pos == my_pos:
+                elif my_next_pos == partner_pos and partner_next_pos == my_pos: 
                     chosen_action = Action.STAY
-                    
-                # [상황 C] 파트너가 움직여서 도달할 미래의 자리에 내가 돌진하는 경우
-                elif my_next_pos == partner_next_pos:
-                    chosen_action = Action.STAY
-            
-            # 3. 파트너가 가만히 있거나(STAY), 요리 중(interact)이거나, 행동을 모를 때
             else:
-                # 내가 파트너가 현재 서 있는 자리로 돌진하는 경우
-                if my_next_pos == partner_pos:
+                # 파트너가 가만히 있거나 상호작용 중일 때 파트너의 위치로 돌진 방지
+                if my_next_pos == partner_pos: 
                     chosen_action = Action.STAY
 
-        # 기존 코드 유지
         self.prev_state = state
         self.current_ml_action_steps += 1
 
+        # 최종 행동 반환
         if self.overcooked_version == '1.1.0':
             return chosen_action, {}
-        elif self.overcooked_version == '0.0.1':
-            return chosen_action
-        
+        return chosen_action
+
+
     def parse_ml_action(self, response, agent_index): 
         if agent_index == 0: 
             pattern = r'layer\s*0: (.+)'
@@ -700,78 +698,88 @@ class ProMediumLevelAgent(ProAgent):
         return ml_action
 
     def generate_ml_action(self, state):
-        """
-        [Modified] 내부 실행 시간을 측정하여 self.last_llm_timing에 저장합니다.
-        이 함수는 이제 백그라운드 스레드에서 호출됩니다.
-        """
-        # 상세 타이밍 기록용 딕셔너리
-        breakdown = {}
-        t_start = time.perf_counter()
+            """
+            [Modified] 전체 실행 시간을 측정하여 필요한 스텝 수(Total Time / 400ms 올림)를 계산합니다.
+            이 데이터는 비실시간(Sync) 모드에서 공평한 시간 비용을 지불하는 데 사용됩니다.
+            """
+            import math
+            
+            # 💡 [NEW] 호출 상태 표시
+            self.is_llm_called_this_step = True
 
-        # -------------------------------------------------
-        # 1. 프롬프트 생성 (Prompt Construction)
-        # -------------------------------------------------
-        if self.prompt_level == "l3-aip" and self.belief_revision:
-            belief_prompt = self.generate_belief_prompt()
-            # print("belief_prompt: ", belief_prompt) # 로그가 너무 길면 주석 처리
-        else:
-            belief_prompt = ''
-        
-        state_prompt = belief_prompt + self.generate_state_prompt(state)
+            # 상세 타이밍 기록용 딕셔너리
+            breakdown = {}
+            t_start = time.perf_counter() # 전체 프로세스 시작 시간
 
-        # print(f"\n\n### Observation module to GPT\n")   
-        # print(f"{state_prompt}")
+            # -------------------------------------------------
+            # 1. 프롬프트 생성 (Prompt Construction)
+            # -------------------------------------------------
+            if self.prompt_level == "l3-aip" and self.belief_revision:
+                belief_prompt = self.generate_belief_prompt()
+            else:
+                belief_prompt = ''
+            
+            state_prompt = belief_prompt + self.generate_state_prompt(state)
 
-        state_message = {"role": "user", "content": state_prompt}
-        self.planner.current_user_message = state_message
-        
-        t_prompt = time.perf_counter()
-        breakdown['1_Prompt_Prep'] = t_prompt - t_start
+            state_message = {"role": "user", "content": state_prompt}
+            self.planner.current_user_message = state_message
+            
+            t_prompt = time.perf_counter()
+            breakdown['1_Prompt_Prep'] = t_prompt - t_start
 
-        # -------------------------------------------------
-        # 2. LLM 추론 (Inference / API Call)
-        # -------------------------------------------------
-        # 실제 시간이 가장 오래 걸리는 구간
-        response = self.planner.query(key=self.openai_api_key(), stop='Scene', trace=self.trace)
-        
-        t_inference = time.perf_counter()
-        breakdown['2_LLM_Inference'] = t_inference - t_prompt
+            # -------------------------------------------------
+            # 2. LLM 추론 (Inference / API Call)
+            # -------------------------------------------------
+            response = self.planner.query(key=self.openai_api_key(), stop='Scene', trace=self.trace)
+            
+            t_inference = time.perf_counter()
+            breakdown['2_LLM_Inference'] = t_inference - t_prompt
+            
+            # 메인 루프 로깅용 순수 추론 시간 저장
+            self.last_llm_response_time = breakdown['2_LLM_Inference'] * 1000
 
-        if 'wait' not in response:
-            self.planner.add_msg_to_dialog_history(state_message) 
-            self.planner.add_msg_to_dialog_history({"role": "assistant", "content": response})
-        
-        print(f"\n\n\n### GPT Planner module\n")   
-        print("====== GPT Query ======")
-        print(response)  
-        self.current_thought = response
+            if 'wait' not in response:
+                self.planner.add_msg_to_dialog_history(state_message) 
+                self.planner.add_msg_to_dialog_history({"role": "assistant", "content": response})
+            
+            # 디버깅 출력
+            print(f"\n\n\n### GPT Planner module\n")   
+            print("====== GPT Query ======")
+            print(response)  
+            self.current_thought = response
 
-        if self.prompt_level == "l3-aip":
-            generated_intention = self.parse_ml_action(response, 1-self.agent_index)
-            self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention
-            #print(f"Intention for Player {1 - self.agent_index}: {generated_intention}")
+            if self.prompt_level == "l3-aip":
+                generated_intention = self.parse_ml_action(response, 1-self.agent_index)
+                self.teammate_intentions_dict[str(self.current_timestep)] = generated_intention
 
-        ml_action = self.parse_ml_action(response, self.agent_index)
+            ml_action = self.parse_ml_action(response, self.agent_index)
 
-        if "wait" not in ml_action:
-            self.planner.add_msg_to_dialog_history({"role": "assistant", "content": ml_action})
-        
-        #print(f"Player {self.agent_index}: {ml_action}")
-        self.current_ml_action_steps = 0
+            if "wait" not in ml_action:
+                self.planner.add_msg_to_dialog_history({"role": "assistant", "content": ml_action})
+            
+            self.current_ml_action_steps = 0
 
-        t_parse = time.perf_counter()
-        breakdown['3_Parsing'] = t_parse - t_inference
-        
-        # [NEW] 클래스 멤버 변수에 상세 기록 저장 (action 메서드에서 읽기 위함)
-        self.last_llm_timing = breakdown
-        
-        return ml_action
+            # -------------------------------------------------
+            # 3. 파싱 및 최종 시간 계산
+            # -------------------------------------------------
+            t_parse = time.perf_counter()
+            breakdown['3_Parsing'] = t_parse - t_inference
+            
+            # 💡 [핵심] 전체 소요 시간 계산 (프롬프트 준비 + 추론 + 파싱)
+            total_duration_ms = (t_parse - t_start) * 1000
+            
+            # 💡 [핵심] 400ms 단위로 올림하여 필요 스텝 수 결정
+            # 예: 1200ms -> 3스텝, 1300ms -> 4스텝
+            required_steps = math.ceil(total_duration_ms / 400)
 
-    ##################
-    '''
-    The followings are the Verificator part
-    '''
-    ##################
+            # 클래스 멤버 변수에 기록 (action 메서드에서 페널티 부여 시 사용)
+            self.last_llm_timing = breakdown
+            self.latest_llm_time_ms = total_duration_ms # 전체 시간 저장
+            self.latest_llm_required_steps = required_steps # 계산된 필요 스텝 수
+            self.llm_just_finished = True 
+            
+            return ml_action     
+
 
     def check_current_ml_action_done(self, state):
         """

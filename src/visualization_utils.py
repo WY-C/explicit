@@ -34,39 +34,56 @@ def render_rich_text(text, font_normal, font_bold, color=(0, 0, 0)):
 
     return final_surf
 
-def transform_to_english_natural(skill_name, idx, is_thought, has_two_objs):
-    color_str = ""
-    if has_two_objs and idx is not None:
-        color_str = "left " if idx == 0 else "right "
+def transform_to_english_natural(skill_name, idx, is_thought, target_objects):
+    direction_str = ""
+    
+    # 💡 [핵심] 두 개의 오브젝트가 있고 인덱스가 유효할 때 좌표를 비교합니다.
+    if target_objects and len(target_objects) == 2 and idx is not None and 0 <= idx < 2:
+        # 오브젝트가 딕셔너리(position 포함)인지 단순 튜플 좌표인지 판별하여 좌표 추출
+        def get_pos(obj):
+            return obj['position'] if isinstance(obj, dict) else obj
+        
+        target_pos = get_pos(target_objects[idx])
+        other_pos = get_pos(target_objects[1 - idx])
+        
+        x_diff = target_pos[0] - other_pos[0]
+        y_diff = target_pos[1] - other_pos[1]
+        
+        # 가로(X축) 차이가 세로(Y축) 차이보다 크거나 같으면 Left/Right 사용
+        if abs(x_diff) >= abs(y_diff):
+            direction_str = "right " if x_diff > 0 else "left "
+        # 세로(Y축) 차이가 더 크면 Top/Bottom 사용 (Y는 아래로 갈수록 커짐)
+        else:
+            direction_str = "bottom " if y_diff > 0 else "top "
 
-    # 💡 강조하고 싶은 부분을 ** 로 감싸줍니다.
+    # AI 자신의 행동 계획
     if not is_thought: 
         skill_map = {
-            "pickup_onion": f"I'll grab the **{color_str}onion**.",
-            "pickup_dish": f"I'll get the **{color_str}dish**.",
-            "pickup_tomato": f"I'll get the **{color_str}tomato**.",
-            "put_onion_in_pot": f"I'll put this in the **{color_str}pot**.",
-            "put_tomato_in_pot": f"I'll put this in the **{color_str}pot**.",
-            "fill_dish_with_soup": f"I'll plate the **{color_str}soup**.",
-            "deliver_soup": "I'll deliver the **soup**.",
-            "place_obj_on_counter": "I'll leave this on the **counter**.",
-            "wait": "I'll **wait** for a sec."
+            "pickup_onion": f"I'll grab the **{direction_str}onion**...",
+            "pickup_dish": f"I'll get the **{direction_str}dish**...",
+            "pickup_tomato": f"I'll get the **{direction_str}tomato**...",
+            "put_onion_in_pot": f"I'll put this in the **{direction_str}pot**...",
+            "put_tomato_in_pot": f"I'll put this in the **{direction_str}pot**...",
+            "fill_dish_with_soup": f"I'll plate the **{direction_str}soup**...",
+            "deliver_soup": "I'll deliver the **soup**...",
+            "place_obj_on_counter": "I'll leave this on the **counter**...",
+            "wait": "I'll **wait** for a sec..."
         }
-    else: # [Intention] 파트너(사람)의 의도 예측 (관찰하며 혼잣말)
+    # 파트너 행동 예측
+    else:
         skill_map = {
-            "pickup_onion": f"Seems like he's going for the **{color_str}onion**...?",
-            "pickup_dish": f"Seems like he's getting the **{color_str}dish**...?",
-            "pickup_tomato": f"Seems like he's getting the **{color_str}tomato**...?",
-            "put_onion_in_pot": f"Seems like he's putting it in the **{color_str}pot**...?",
-            "put_tomato_in_pot": f"Seems like he's putting it in the **{color_str}pot**...?",
-            "fill_dish_with_soup": f"Seems like he's plating the **{color_str}soup**...?",
-            "deliver_soup": "Seems like he's delivering the **soup**...?",
-            "place_obj_on_counter": "Seems like he's leaving it on the **counter**...?",
-            "wait": "Seems like he's **waiting**...?"
+            "pickup_onion": f"Seems like he's going for the **{direction_str}onion**...",
+            "pickup_dish": f"Seems like he's getting the **{direction_str}dish**...",
+            "pickup_tomato": f"Seems like he's getting the **{direction_str}tomato**...",
+            "put_onion_in_pot": f"Seems like he's putting it in the **{direction_str}pot**...",
+            "put_tomato_in_pot": f"Seems like he's putting it in the **{direction_str}pot**...",
+            "fill_dish_with_soup": f"Seems like he's plating the **{direction_str}soup**...",
+            "deliver_soup": "Seems like he's delivering the **soup**...",
+            "place_obj_on_counter": "Seems like he's leaving it on the **counter**...",
+            "wait": "Seems like he's **waiting**..."
         }
     
     return skill_map.get(skill_name, "Thinking...")
-
 def generate_layout_dict(mdp):
     """
     레이아웃 정보를 문자열 대신 구조화된 딕셔너리로 반환합니다.
@@ -276,6 +293,7 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
     temp_surf.blit(content_surf, (padding, padding))
     temp_surf.set_alpha(alpha)
     window.blit(temp_surf, (bubble_x, bubble_y))
+
 def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
                 thought_msg=None, show_intention=True):
     if not window or not visualizer:
@@ -311,29 +329,14 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
     grid_width, grid_height = len(env.mdp.terrain_mtx[0]), len(env.mdp.terrain_mtx)
     tile_w, tile_h = surf_width / grid_width, surf_height / grid_height
 
-    # 4. [Map Borders] 맵 위 오브젝트 테두리는 유지 (식별용)
-    # if visual_level in [1, 2]:
-    #     for char, locs in obj_info.items():
-    #         if len(locs) == 2:
-    #             for i, (hx, hy) in enumerate(locs):
-    #                 color = (0, 120, 255) if i == 0 else (255, 60, 60)
-    #                 pygame.draw.rect(window, color, pygame.Rect(start_x + hx * tile_w, map_start_y + hy * tile_h, tile_w, tile_h), 4)
 
-    # 5. [Speech Bubbles] 말풍선 렌더링 (Level 1, 2 전용)
-    # 5. [Speech Bubbles] 말풍선 렌더링 (Level 1, 2 전용)
-    if visual_level in [1, 2]:
+    # 5. [Speech Bubbles] 말풍선 렌더링 (💡 Level 1 전용: 자연어)
+    if visual_level == 1:
         bubbles_to_draw = []
         
         # thought_msg가 전달되었을 때 기존 파싱 수행
         if thought_msg:
             raw_lines = thought_msg.split('\n')
-            
-            icon_map = {
-                "pickup_onion": "onions", "pickup_dish": "dishes", "pickup_tomato": "tomatoes",
-                "put_onion_in_pot": "pot", "put_tomato_in_pot": "pot",
-                "fill_dish_with_soup": "soup-onion-cooked",
-                "deliver_soup": "serving", "wait": "stay"
-            } 
 
             action_priorities = [
                 ("put_onion_in_pot", 'P'), ("put_tomato_in_pot", 'P'), ("fill_dish_with_soup", 'P'),
@@ -356,7 +359,6 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 if target_pid != -1:
                     b_color, b_width = (0, 0, 0), 2 
                     
-                    # 💡 [핵심] 기본 텍스트를 먼저 할당해 두어 에러를 방지합니다.
                     display_text = content_str 
                     
                     idx_match = re.search(r'\((\d+)\)', content_str)
@@ -369,54 +371,53 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                             target_skill, target_char = skill, char
                             break
                     
-                    has_two = (len(obj_info.get(target_char, [])) == 2) if target_char else False
+                    target_objects = obj_info.get(target_char, []) if target_char else []
 
-                    # 자연어 모드(Level 1)일 경우 텍스트를 자연어로 덮어씌웁니다.
-                    if visual_level == 1:
-                        display_text = transform_to_english_natural(target_skill, idx, is_thought, has_two)
+                    # 텍스트를 자연어로 변환
+                    display_text = transform_to_english_natural(target_skill, idx, is_thought, target_objects)
 
                     content_surf = None
-                    if visual_level == 2:
-                        found_icon = next((val for key, val in icon_map.items() if key in content_str), None)
-                        temp = pygame.Surface((40, 40), pygame.SRCALPHA)
-                        if found_icon:
-                            for src in [visualizer.OBJECTS_IMG, visualizer.TERRAINS_IMG]:
-                                try: 
-                                    src.blit_on_surface(temp, (0, 0), found_icon)
-                                    break
-                                except: 
-                                    continue
-                        
-                        bounding_rect = temp.get_bounding_rect()
-                        if bounding_rect.width > 0 and bounding_rect.height > 0:
-                            cropped_icon = temp.subsurface(bounding_rect).copy()
-                        else:
-                            cropped_icon = temp
-                            
-                        content_surf = pygame.transform.scale(cropped_icon, (45, 45))
-                    else:
-                        # 텍스트 렌더링 모드일 때 커스텀 리치 텍스트 사용
-                        font_normal = pygame.font.SysFont("arial", 18, bold=False)
-                        font_bold = pygame.font.SysFont("arial", 18, bold=True)
-                        content_surf = render_rich_text(display_text, font_normal, font_bold)
+                    
+                    # 💡 [수정] 기존 이모지 로직 주석 처리
+                    # if visual_level == 2:
+                    #     found_icon = next((val for key, val in icon_map.items() if key in content_str), None)
+                    #     temp = pygame.Surface((40, 40), pygame.SRCALPHA)
+                    #     if found_icon:
+                    #         for src in [visualizer.OBJECTS_IMG, visualizer.TERRAINS_IMG]:
+                    #             try: 
+                    #                 src.blit_on_surface(temp, (0, 0), found_icon)
+                    #                 break
+                    #             except: 
+                    #                 continue
+                    #     bounding_rect = temp.get_bounding_rect()
+                    #     if bounding_rect.width > 0 and bounding_rect.height > 0:
+                    #         cropped_icon = temp.subsurface(bounding_rect).copy()
+                    #     else:
+                    #         cropped_icon = temp
+                    #     content_surf = pygame.transform.scale(cropped_icon, (45, 45))
+                    # else:
+                    
+                    # 💡 [수정] 무조건 자연어 텍스트로 렌더링
+                    font_normal = pygame.font.SysFont("arial", 18, bold=False)
+                    font_bold = pygame.font.SysFont("arial", 18, bold=True)
+                    content_surf = render_rich_text(display_text, font_normal, font_bold)
 
                     if content_surf:
                         bubbles_to_draw.append({"pid": target_pid, "surf": content_surf, "is_thought": is_thought, "color": b_color, "width": b_width})
 
-        # 💡 [핵심 추가 부분] 파싱된 말풍선이 하나도 없다면 "I'm thinking..." 출력
+        # 파싱된 말풍선이 하나도 없다면 "I'm thinking..." 출력
         if len(bubbles_to_draw) == 0:
             font_bubble = pygame.font.SysFont("arial", 18, bold=True)
-            # 생각 중일 때는 텍스트 색상을 약간 연한 회색(100, 100, 100)으로 해도 좋습니다.
             content_surf = font_bubble.render("I'm thinking...", True, (0, 0, 0))
             bubbles_to_draw.append({
                 "pid": num_AI,
                 "surf": content_surf,
-                "is_thought": False,  # 꼬리를 그려주기 위해 False
-                "color": (150, 150, 150), # 테두리를 회색으로 하여 구별
+                "is_thought": False, 
+                "color": (150, 150, 150),
                 "width": 2
             })
 
-        # 화면에 말풍선 그리기 (이전 단계에서 수정한 AI 머리 위에만 띄우기 & 꼬리 제거 로직 포함)
+        # 화면에 말풍선 그리기
         for b in bubbles_to_draw:
             px, py = get_player_screen_pos(num_AI, env, map_start_y, start_x, surf_width, surf_height)
             
@@ -433,8 +434,8 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 draw_tail=show_tail
             )
 
-    # 6. 🚨 [Visual Level 3] 목표 타일 하이라이트 전용 로직 (말풍선 없음) 🚨
-    elif visual_level == 3 and thought_msg:
+    # 6. 🚨 [Visual Level 2] 목표 타일 하이라이트 전용 로직 (💡 Level 3에서 2로 변경) 🚨
+    elif visual_level == 2 and thought_msg:
         try:
             highlight_for_inference_coords, highlight_for_plan_coords = parse_separate_highlights(thought_msg, layout_dict, num_AI=num_AI)
             if not show_intention: highlight_for_inference_coords = []
@@ -444,9 +445,6 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 inf_color, plan_color = highlight_color_green, highlight_color_blue 
             else: 
                 inf_color, plan_color = highlight_color_blue, highlight_color_green  
-
-            # 물음표 폰트 설정 (타일 크기에 맞게 큼직하게)
-            font_question = pygame.font.SysFont("arial", 36, bold=True)
 
             # 1. AI의 행동 계획 (Plan) 그리기 - 물음표 없음
             if highlight_for_plan_coords:
@@ -469,20 +467,8 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                     # 배경과 테두리 그리기
                     window.blit(s_inf, (dx, dy))
                     pygame.draw.rect(window, inf_color, pygame.Rect(dx, dy, tile_w, tile_h), 3)
-                    
-                    # 💡 [핵심] AI의 목표 지점(Plan)과 겹치지 않을 때만 물음표를 그립니다.
-                    # if (hx, hy) not in highlight_for_plan_coords:
-                    #     q_surf = font_question.render("?", True, (255, 255, 255)) 
-                    #     q_shadow = font_question.render("?", True, (0, 0, 0))
-                    #     shadow_rect = q_shadow.get_rect(center=(dx + tile_w//2 + 2, dy + tile_h//2 + 2))
-                    #     q_rect = q_surf.get_rect(center=(dx + tile_w//2 - 3, dy + tile_h//2 - 3))
-
-                    #     window.blit(q_shadow, shadow_rect)
-                    #     window.blit(q_surf, q_rect)
 
         except Exception as e:
-             print(f"Error in Level 3 rendering: {e}")
+             print(f"Error in Level 2 rendering: {e}")
 
     pygame.display.flip()
-
-
