@@ -6,6 +6,13 @@ import os
 import csv
 from argparse import ArgumentParser
 from main import main as run_overcooked_game, get_parser
+# 0: 'A', 1: 'B', 2: 'C', 3: 'D'
+LATIN_SQUARE_MAPS = [
+    [0, 1, 3, 2],
+    [1, 2, 0, 3],
+    [2, 3, 1, 0],
+    [3, 0, 2, 1]
+]
 
 MAP_POOL = {'A': 'cramped_room', 'B': 'asymmetric_advantages', 'C': 'coordination_ring', 'D': 'counter_circuit'}
 CONDITION_SETTINGS = {
@@ -36,22 +43,33 @@ LATIN_SQUARE_10 = [
 
 def get_experimental_plan(pid):
     map_keys = ['A', 'B', 'C', 'D']
-    start_map_idx = (pid - 1) % 4
-    selected_map_keys = [map_keys[(start_map_idx + i) % 4] for i in range(3)]
+    
+    # PID에 따라 사용할 맵의 라틴 방진 행(Row)을 결정합니다.
+    map_row_idx = (pid - 1) % len(LATIN_SQUARE_MAPS)
+    
+    # 해당 행의 순서대로 맵 인덱스를 가져오고, 앞서 말씀하신 대로 총 3개의 블록만 진행하므로 [:3]으로 3개만 자릅니다.
+    selected_map_indices = LATIN_SQUARE_MAPS[map_row_idx][:3]
+    selected_map_keys = [map_keys[i] for i in selected_map_indices]
+    
     plan = []
     
-    # PID에 따라 첫 번째 블록에서 사용할 라틴 방진의 행(Row) 번호를 결정합니다.
+    # PID에 따라 첫 번째 블록에서 사용할 에이전트 조건 라틴 방진의 행 번호 결정
     base_start_cond = (pid - 1) % 10 
     
     for block_idx, m_key in enumerate(selected_map_keys):
         block_layout = MAP_POOL[m_key]
         
-        # 블록이 넘어갈 때마다 라틴 방진의 다음 행(Row)을 사용하도록 합니다.
+        # 블록이 넘어갈 때마다 에이전트 조건 라틴 방진의 다음 행(Row)을 사용
         row_idx = (base_start_cond + block_idx) % 10
         block_conditions = LATIN_SQUARE_10[row_idx]
         
         for c_id in block_conditions:
-            plan.append({"block": block_idx + 1, "layout_key": m_key, "layout_name": block_layout, "cond_id": c_id})
+            plan.append({
+                "block": block_idx + 1, 
+                "layout_key": m_key, 
+                "layout_name": block_layout, 
+                "cond_id": c_id
+            })
             
     return plan
 
@@ -95,11 +113,18 @@ def wait_for_user(surface, title, subtitle):
                     
         pygame.time.delay(10)
 if __name__ == '__main__':
+    # 1. 먼저 사용자가 입력한 인자(PID)를 받아옵니다.
     parser = get_parser()
     parser.add_argument('--pid', type=int, required=True)
     args = parser.parse_args()
     base_variant = vars(args)
     pid = base_variant['pid']
+    
+    # 2. 받아온 PID를 이용해 미리 폴더를 안전하게 만들어 둡니다.
+    log_dir = f"experiments/PID_{pid}"
+    if not os.path.exists(log_dir): os.makedirs(log_dir)
+    
+    # 3. 실험 계획(라틴 방진)을 짜고 파이게임을 시작합니다.
     study_plan = get_experimental_plan(pid)
     
     pygame.init()
