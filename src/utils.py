@@ -24,14 +24,21 @@ from stable_baselines import GAIL
 BC_SAVE_DIR = "../models/bc_runs/"
 
 OLD_LAYOUTS = {
-    "counter_circuit": "random3",
-    "forced_coordination": "random0",
-    "cramped_room": "simple",
-    "coordination_ring": "random1",
-    "asymmetric_advantages": "unident_s"
+    "counter_circuit": "counter_circuit",
+    "forced_coordination": "forced_coordination",
+    "cramped_room": "cramped_room",
+    "coordination_ring": "coordination_ring",
+    "asymmetric_advantages": "asymmetric_advantages"
 }
+# OLD_LAYOUTS = {
+#     "counter_circuit": "random3",
+#     "forced_coordination": "random0",
+#     "cramped_room": "simple",
+#     "coordination_ring": "random1",
+#     "asymmetric_advantages": "unident_s"
+# }
 NEW_LAYOUTS = {
-    "counter_circuit": "counter_circuit_o_1order",
+    "counter_circuit": "counter_circuit",
     "forced_coordination": "forced_coordination",
     "cramped_room": "cramped_room",
     "coordination_ring": "coordination_ring",

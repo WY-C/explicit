@@ -1,8 +1,8 @@
 {
     "grid":  """XXPXX
-                O  2O
-                T1  T
-                XDPSX""",
+                O1 2O
+                X   X
+                XDXSX""",
     "start_order_list": None,
     "cook_time": 20,
     "num_items_for_soup": 3,

@@ -10,7 +10,7 @@ warnings.filterwarnings('ignore') # 보기 싫은 경고 메시지 숨김
 
 
 # 1. 파일 불러오기
-file_name = 'mock_data.csv'
+file_name = 'data.csv'
 df = pd.read_csv(file_name)
 
 # 2. 데이터를 세로형(Long format)으로 변환

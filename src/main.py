@@ -8,13 +8,9 @@ import pygame
 import visualization_utils as vu
 from argparse import ArgumentParser
 from distutils.util import strtobool
-from rich import print as rprint
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
-
-import importlib_metadata
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv
-from overcooked_ai_py.mdp.actions import Action
+from overcooked_ai_py.mdp.actions import Action, Direction
 from overcooked_ai_py.agents.agent import AgentGroup, Agent
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 from utils import NEW_LAYOUTS, OLD_LAYOUTS, make_agent
@@ -23,12 +19,12 @@ from utils import NEW_LAYOUTS, OLD_LAYOUTS, make_agent
 warnings.simplefilter(action='ignore', category=FutureWarning)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-try:
-    VERSION = importlib_metadata.version("overcooked_ai")
-except:
-    VERSION = "0.0.1"
-
-LLM_AGENT_TYPES = ['ProAgent', 'EIRA', 'EIRAAsync']
+TARGET_SCORES = {
+    'cramped_room': 60,
+    'asymmetric_advantages': 100,
+    'coordination_ring': 60,
+    'counter_circuit': 60
+}
 
 def boolean_argument(value):
     return bool(strtobool(value))
@@ -39,7 +35,8 @@ class OvercookedLogger:
         if not os.path.exists(self.log_dir): os.makedirs(self.log_dir)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         layout = variant.get('layout', 'unknown')
-        self.filepath = os.path.join(self.log_dir, f"log_{timestamp}_{layout}.jsonl")
+        cond_name = variant.get('name', 'unknown')
+        self.filepath = os.path.join(self.log_dir, f"log_{timestamp}_{layout}_{cond_name}.jsonl")
         if variant: self._write_line({"metadata": variant})
             
     def log_step(self, step_data): self._write_line(step_data)
@@ -68,7 +65,7 @@ def get_parser():
     parser.add_argument('--layout', '-l', type=str, default='cramped_room')
     parser.add_argument('--p0', type=str, default='Human')
     parser.add_argument('--p1', type=str, default='EIRAAsync')
-    parser.add_argument('--horizon', type=int, default=250)
+    parser.add_argument('--horizon', type=int, default=400)
     parser.add_argument('--cook_time', type=int, default=20)
     parser.add_argument('--episode', type=int, default=1)
     parser.add_argument('--render', type=boolean_argument, default=True)
@@ -78,74 +75,58 @@ def get_parser():
     parser.add_argument('--timestep', type=int, default=400)
     parser.add_argument('--gpt_model', type=str, default='Qwen/Qwen3-VL-8B-Instruct')
     parser.add_argument('--prompt_level', type=str, default='l3-aip')
-    parser.add_argument('--belief_revision', type=boolean_argument, default=False)
-    parser.add_argument('--retrival_method', type=str, default="recent_k")
-    parser.add_argument('--K', type=int, default=1)
-    parser.add_argument('--mode', type=str, default='exp')
-    parser.add_argument('--save', type=boolean_argument, default=True)
     parser.add_argument('--log_dir', type=str, default=None)
+    parser.add_argument('--name', type=str, default='unknown')
     return parser
 
 def main(variant, surface=None):
-    layout_name = variant['layout']
-    horizon = variant['horizon']
-    episode = variant['episode']
-    render = variant['render'] 
-    visual_level = variant['visual_level']
+    layout_name = variant.get('layout', 'cramped_room')
+    horizon = variant.get('horizon', 400)
+    episode = variant.get('episode', 1)
+    render = variant.get('render', True)
+    visual_level = variant.get('visual_level', 2)
     async_mode = variant.get('async', True)
-    game_timestep = variant['timestep'] 
+    game_timestep = variant.get('timestep', 400)
+    target_score = TARGET_SCORES.get(layout_name, 60)
 
-    mdp_layout = NEW_LAYOUTS.get(layout_name, layout_name) if VERSION == '1.1.0' else OLD_LAYOUTS.get(layout_name, layout_name)
-    mdp = OvercookedGridworld.from_layout_name(mdp_layout)
+    mdp = OvercookedGridworld.from_layout_name(layout_name)
     layout_dict = vu.generate_layout_dict(mdp)
     env = OvercookedEnv(mdp, horizon=horizon)
     
-    # Pygame 화면 설정
     window_surface = surface
     if not pygame.get_init(): pygame.init()
     if render and window_surface is None:
         window_surface = pygame.display.set_mode((900, 600))
-    #pygame.display.set_caption(f"Overcooked AI - {layout_name}")
     
-    visualizer = StateVisualizer(cook_time=variant['cook_time'])
+    visualizer = StateVisualizer(cook_time=variant.get('cook_time', 20))
     
-    # 에이전트 생성 및 필수 속성 강제 주입
     agents_list = []
-    for alg in [variant['p0'], variant['p1']]:
+    for alg in [variant.get('p0', 'Human'), variant.get('p1', 'EIRAAsync')]:
         if alg in LLM_AGENT_TYPES:
-            agent = make_agent(alg, mdp, layout_name, model=variant['gpt_model'], prompt_level=variant['prompt_level'])
-        elif alg == "Human": 
-            agent = HumanAgent()
-        else: 
-            agent = make_agent(alg, mdp, layout_name)
+            agent = make_agent(alg, mdp, layout_name, model=variant.get('gpt_model', 'Qwen/Qwen3-VL-8B-Instruct'), prompt_level=variant.get('prompt_level', 'l3-aip'))
+        elif alg == "Human": agent = HumanAgent()
+        else: agent = make_agent(alg, mdp, layout_name)
         
-        # 💡 [속성 에러 방지] 필수 변수들 강제 초기화
         agent.async_mode = async_mode
         agent.current_timestep = 0
-        if not hasattr(agent, 'teammate_intentions_dict'): agent.teammate_intentions_dict = {}
-        if not hasattr(agent, 'current_thought'): agent.current_thought = None
         agents_list.append(agent)
     
-    team = AgentGroup(*agents_list)
-    results = []
+    results_score, results_step, results_col = [], [], []
 
     for ep in range(episode):
         logger = OvercookedLogger(log_dir=variant.get('log_dir', 'experiments/logs'), variant=variant)
         env.reset()
-        r_total = 0
+        r_total, inter_col_count = 0, 0
+        final_t = horizon
         
-        # 웜업 로직
         if render:
             vu.draw_centered_text(window_surface, "AI Initializing...", "Thinking...", color=(0, 0, 255))
             pygame.display.flip()
             for agent in agents_list:
                 if hasattr(agent, 'generate_ml_action'): agent.generate_ml_action(env.state)
 
-        clock = pygame.time.Clock()
         for t in range(1, horizon + 1):
-            # 💡 에이전트들에게 현재 스텝 전달
             for agent in agents_list: agent.current_timestep = t
-                
             step_start_time = pygame.time.get_ticks()
             human_action = Action.STAY
             action_chosen = False
@@ -153,25 +134,25 @@ def main(variant, surface=None):
             if async_mode:
                 while pygame.time.get_ticks() - step_start_time < game_timestep:
                     for event in pygame.event.get():
-                        if event.type == pygame.QUIT: pygame.quit(); return 0
+                        if event.type == pygame.QUIT: pygame.quit(); return 0, 0, 0
                         if event.type == pygame.KEYDOWN and not action_chosen:
-                            if event.key == pygame.K_UP: human_action = (0, -1); action_chosen = True
-                            elif event.key == pygame.K_DOWN: human_action = (0, 1); action_chosen = True
-                            elif event.key == pygame.K_LEFT: human_action = (-1, 0); action_chosen = True
-                            elif event.key == pygame.K_RIGHT: human_action = (1, 0); action_chosen = True
+                            if event.key == pygame.K_UP: human_action = Direction.NORTH; action_chosen = True
+                            elif event.key == pygame.K_DOWN: human_action = Direction.SOUTH; action_chosen = True
+                            elif event.key == pygame.K_LEFT: human_action = Direction.WEST; action_chosen = True
+                            elif event.key == pygame.K_RIGHT: human_action = Direction.EAST; action_chosen = True
                             elif event.key == pygame.K_SPACE: human_action = Action.INTERACT; action_chosen = True
                     pygame.time.delay(1)
             else:
                 thought_idx, thought_msg = get_combined_thought(agents_list)
-                vu.render_game(window_surface, visualizer, env, t, horizon, r_total, thought_idx, visual_level, layout_dict, thought_msg, variant['show_intention'])
+                vu.render_game(window_surface, visualizer, env, t, horizon, r_total, thought_idx, visual_level, layout_dict, thought_msg, variant.get('show_intention', True))
                 while not action_chosen:
                     for event in pygame.event.get():
-                        if event.type == pygame.QUIT: pygame.quit(); return 0
+                        if event.type == pygame.QUIT: pygame.quit(); return 0, 0, 0
                         if event.type == pygame.KEYDOWN:
-                            if event.key == pygame.K_UP: human_action = (0, -1); action_chosen = True
-                            elif event.key == pygame.K_DOWN: human_action = (0, 1); action_chosen = True
-                            elif event.key == pygame.K_LEFT: human_action = (-1, 0); action_chosen = True
-                            elif event.key == pygame.K_RIGHT: human_action = (1, 0); action_chosen = True
+                            if event.key == pygame.K_UP: human_action = Direction.NORTH; action_chosen = True
+                            elif event.key == pygame.K_DOWN: human_action = Direction.SOUTH; action_chosen = True
+                            elif event.key == pygame.K_LEFT: human_action = Direction.WEST; action_chosen = True
+                            elif event.key == pygame.K_RIGHT: human_action = Direction.EAST; action_chosen = True
                             elif event.key == pygame.K_SPACE: human_action = Action.INTERACT; action_chosen = True
                     pygame.time.delay(10)
 
@@ -181,18 +162,38 @@ def main(variant, surface=None):
                     agent.set_next_action(human_action); actions.append(agent.action(env.state))
                 else: actions.append(agent.action(env.state, partner_action=human_action))
 
-            _, reward, done, _ = env.step(tuple(actions))
+            # 💡 상호 충돌 감지 로직
+            old_p0, old_p1 = env.state.players[0].position, env.state.players[1].position
+            int_p0 = (old_p0[0] + actions[0][0], old_p0[1] + actions[0][1]) if actions[0] in Direction.ALL_DIRECTIONS else old_p0
+            int_p1 = (old_p1[0] + actions[1][0], old_p1[1] + actions[1][1]) if actions[1] in Direction.ALL_DIRECTIONS else old_p1
+            
+            is_col = False
+            if int_p0 == int_p1 and (actions[0] != Action.STAY or actions[1] != Action.STAY): is_col = True
+            elif int_p0 == old_p1 and int_p1 == old_p0 and actions[0] != Action.STAY and actions[1] != Action.STAY: is_col = True
+            elif actions[0] in Direction.ALL_DIRECTIONS and int_p0 == old_p1 and actions[1] not in Direction.ALL_DIRECTIONS: is_col = True
+            elif actions[1] in Direction.ALL_DIRECTIONS and int_p1 == old_p0 and actions[0] not in Direction.ALL_DIRECTIONS: is_col = True
+            if is_col: inter_col_count += 1
+
+            _, reward, is_timeout, _ = env.step(tuple(actions))
             r_total += reward
+            is_success = r_total >= target_score
+            done = is_timeout or is_success
             
-            if async_mode:
-                thought_idx, thought_msg = get_combined_thought(agents_list)
-                vu.render_game(window_surface, visualizer, env, t, horizon, r_total, thought_idx, visual_level, layout_dict, thought_msg, variant['show_intention'])
+            thought_idx, thought_msg = get_combined_thought(agents_list)
+            logger.log_step({"timestep": t, "inter_collision": is_col, "reward": reward, "cumulative_reward": r_total, "done": done})
+
+            if render and async_mode:
+                vu.render_game(window_surface, visualizer, env, t, horizon, r_total, thought_idx, visual_level, layout_dict, thought_msg, variant.get('show_intention', True))
             
-            if done: break
+            if done: 
+                final_t = t
+                break
         
-        results.append(r_total)
+        results_score.append(r_total)
+        results_step.append(final_t)
+        results_col.append(inter_col_count)
     
-    return int(np.mean(results))
+    return int(np.mean(results_score)), int(np.mean(results_step)), int(np.mean(results_col))
 
 if __name__ == '__main__':
     parser = get_parser()

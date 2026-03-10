@@ -1,9 +1,9 @@
 {
-    "grid":  """XXXPX
-                O X1P
-                O2X X
-                D X X
-                XXXSX""",
+    "grid":  """XXXXPXXXX
+    		O       D
+    		X      2X
+    		X   1   X
+    		XXXXSXXXX""",
     "start_order_list": None,
     "cook_time": 20,
     "num_items_for_soup": 3,

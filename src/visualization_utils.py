@@ -49,41 +49,42 @@ def transform_to_english_natural(skill_name, idx, is_thought, target_objects):
         x_diff = target_pos[0] - other_pos[0]
         y_diff = target_pos[1] - other_pos[1]
         
-        # 가로(X축) 차이가 세로(Y축) 차이보다 크거나 같으면 Left/Right 사용
+        # 가로(X축) 차이가 세로(Y축) 차이보다 크거나 같으면 좌/우 사용
         if abs(x_diff) >= abs(y_diff):
-            direction_str = "right " if x_diff > 0 else "left "
-        # 세로(Y축) 차이가 더 크면 Top/Bottom 사용 (Y는 아래로 갈수록 커짐)
+            direction_str = "오른쪽 " if x_diff > 0 else "왼쪽 "
+        # 세로(Y축) 차이가 더 크면 위/아래 사용 (Y는 아래로 갈수록 커짐)
         else:
-            direction_str = "bottom " if y_diff > 0 else "top "
+            direction_str = "아래쪽 " if y_diff > 0 else "위쪽 "
 
     # AI 자신의 행동 계획
     if not is_thought: 
         skill_map = {
-            "pickup_onion": f"I'll grab the **{direction_str}onion**...",
-            "pickup_dish": f"I'll get the **{direction_str}dish**...",
-            "pickup_tomato": f"I'll get the **{direction_str}tomato**...",
-            "put_onion_in_pot": f"I'll put this in the **{direction_str}pot**...",
-            "put_tomato_in_pot": f"I'll put this in the **{direction_str}pot**...",
-            "fill_dish_with_soup": f"I'll plate the **{direction_str}soup**...",
-            "deliver_soup": "I'll deliver the **soup**...",
-            "place_obj_on_counter": "I'll leave this on the **counter**...",
-            "wait": "I'll **wait** for a sec..."
+            "pickup_onion": f"내가 **{direction_str}양파**를 집을게.",
+            "pickup_dish": f"내가 **{direction_str}접시**를 가져올게.",
+            "pickup_tomato": f"내가 **{direction_str}토마토**를 가져올게.",
+            "put_onion_in_pot": f"내가 이걸 **{direction_str}냄비**에 넣을게.",
+            "put_tomato_in_pot": f"내가 이걸 **{direction_str}냄비**에 넣을게.",
+            "fill_dish_with_soup": f"내가 **{direction_str}수프**를 그릇에 담을게.",
+            "deliver_soup": "내가 **수프**를 서빙할게.",
+            "place_obj_on_counter": "내가 이걸 **카운터**에 둘게.",
+            "wait": "내가 잠깐 **대기**할게."
         }
-    # 파트너 행동 예측
+    # 파트너(사람) 행동 예측
     else:
         skill_map = {
-            "pickup_onion": f"Seems like he's going for the **{direction_str}onion**...",
-            "pickup_dish": f"Seems like he's getting the **{direction_str}dish**...",
-            "pickup_tomato": f"Seems like he's getting the **{direction_str}tomato**...",
-            "put_onion_in_pot": f"Seems like he's putting it in the **{direction_str}pot**...",
-            "put_tomato_in_pot": f"Seems like he's putting it in the **{direction_str}pot**...",
-            "fill_dish_with_soup": f"Seems like he's plating the **{direction_str}soup**...",
-            "deliver_soup": "Seems like he's delivering the **soup**...",
-            "place_obj_on_counter": "Seems like he's leaving it on the **counter**...",
-            "wait": "Seems like he's **waiting**..."
+            "pickup_onion": f"네가 **{direction_str}양파**를 집으려는 것 같네.",
+            "pickup_dish": f"네가 **{direction_str}접시**를 가져오려는 것 같네.",
+            "pickup_tomato": f"네가 **{direction_str}토마토**를 가져오려는 것 같네.",
+            "put_onion_in_pot": f"네가 그걸 **{direction_str}냄비**에 넣으려는 것 같네.",
+            "put_tomato_in_pot": f"네가 그걸 **{direction_str}냄비**에 넣으려는 것 같네.",
+            "fill_dish_with_soup": f"네가 **{direction_str}수프**를 담으려는 것 같네.",
+            "deliver_soup": "네가 **수프**를 서빙하려는 것 같네.",
+            "place_obj_on_counter": "네가 그걸 **카운터**에 두려는 것 같네.",
+            "wait": "네가 잠깐 **대기**하려는 것 같네."
         }
     
-    return skill_map.get(skill_name, "Thinking...")
+    return skill_map.get(skill_name, "생각 중...")
+
 def generate_layout_dict(mdp):
     """
     레이아웃 정보를 문자열 대신 구조화된 딕셔너리로 반환합니다.
@@ -294,10 +295,23 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
     temp_surf.set_alpha(alpha)
     window.blit(temp_surf, (bubble_x, bubble_y))
 
+import pygame
+import re
+import platform
+
 def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
                 thought_msg=None, show_intention=True):
     if not window or not visualizer:
         return
+
+    # 💡 [추가] OS별 한글 지원 기본 폰트 자동 설정
+    os_name = platform.system()
+    if os_name == 'Windows':
+        korean_font_name = 'malgungothic'  # 맑은 고딕
+    elif os_name == 'Darwin':
+        korean_font_name = 'applegothic'   # 애플 고딕
+    else:
+        korean_font_name = 'nanumgothic'   # 나눔 고딕 (리눅스 등)
 
     # 1. [Pre-calculation] 맵 전체 오브젝트 정보 파악
     highlight_color_green = (80, 220, 150) # 보통 Plan 색상
@@ -314,8 +328,9 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
     # 2. 배경 및 기본 정보 렌더링
     window.fill((255, 255, 255)) 
     screen_width, screen_height = window.get_size()
-    font_name = "arial"
-    font_header = pygame.font.SysFont(font_name, 30, bold=True)
+    
+    # 💡 [수정] arial 대신 korean_font_name 적용
+    font_header = pygame.font.SysFont(korean_font_name, 30, bold=True)
     info_text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
     window.blit(info_text, (10, 10))
 
@@ -373,42 +388,24 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                     
                     target_objects = obj_info.get(target_char, []) if target_char else []
 
-                    # 텍스트를 자연어로 변환
+                    # 텍스트를 자연어로 변환 (이전 단계에서 만든 한국어 함수 호출 예상)
                     display_text = transform_to_english_natural(target_skill, idx, is_thought, target_objects)
 
                     content_surf = None
                     
-                    # 💡 [수정] 기존 이모지 로직 주석 처리
-                    # if visual_level == 2:
-                    #     found_icon = next((val for key, val in icon_map.items() if key in content_str), None)
-                    #     temp = pygame.Surface((40, 40), pygame.SRCALPHA)
-                    #     if found_icon:
-                    #         for src in [visualizer.OBJECTS_IMG, visualizer.TERRAINS_IMG]:
-                    #             try: 
-                    #                 src.blit_on_surface(temp, (0, 0), found_icon)
-                    #                 break
-                    #             except: 
-                    #                 continue
-                    #     bounding_rect = temp.get_bounding_rect()
-                    #     if bounding_rect.width > 0 and bounding_rect.height > 0:
-                    #         cropped_icon = temp.subsurface(bounding_rect).copy()
-                    #     else:
-                    #         cropped_icon = temp
-                    #     content_surf = pygame.transform.scale(cropped_icon, (45, 45))
-                    # else:
-                    
-                    # 💡 [수정] 무조건 자연어 텍스트로 렌더링
-                    font_normal = pygame.font.SysFont("arial", 18, bold=False)
-                    font_bold = pygame.font.SysFont("arial", 18, bold=True)
+                    # 💡 [수정] 무조건 자연어 텍스트로 렌더링 + 한글 폰트 적용
+                    font_normal = pygame.font.SysFont(korean_font_name, 18, bold=False)
+                    font_bold = pygame.font.SysFont(korean_font_name, 18, bold=True)
                     content_surf = render_rich_text(display_text, font_normal, font_bold)
 
                     if content_surf:
                         bubbles_to_draw.append({"pid": target_pid, "surf": content_surf, "is_thought": is_thought, "color": b_color, "width": b_width})
 
-        # 파싱된 말풍선이 하나도 없다면 "I'm thinking..." 출력
+        # 파싱된 말풍선이 하나도 없다면 "생각 중..." 출력 (한글화 적용)
         if len(bubbles_to_draw) == 0:
-            font_bubble = pygame.font.SysFont("arial", 18, bold=True)
-            content_surf = font_bubble.render("I'm thinking...", True, (0, 0, 0))
+            # 💡 [수정] 한글 폰트 적용 및 기본 문구 한글화
+            font_bubble = pygame.font.SysFont(korean_font_name, 18, bold=True)
+            content_surf = font_bubble.render("생각 중...", True, (0, 0, 0))
             bubbles_to_draw.append({
                 "pid": num_AI,
                 "surf": content_surf,
@@ -429,7 +426,7 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
                 is_thought=b['is_thought'], 
                 border_color=b['color'], 
                 border_width=b['width'],
-                alpha=150,
+                alpha=120,
                 y_offset=target_y_offset,
                 draw_tail=show_tail
             )

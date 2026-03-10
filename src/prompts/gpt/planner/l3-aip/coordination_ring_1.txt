@@ -20,7 +20,7 @@ Instructions:
 - Map Topology Constraint: The center of the kitchen is blocked, creating narrow pathways. Players cannot pass through each other. If the other player is carrying an important item (like soup) and is moving through a narrow path, you MUST prioritize using the wait skill to yield the way and avoid deadlocks.
 
 Skill:
-In this game, each player can ONLY perform the following 6 allowed skill:pickup_onion, pickup_dish, put_onion_in_pot, fill_dish_with_soup, deliver_soup, place_obj_on_counter, wait. Do not attempt to use any other skills that are not listed here.
+In this game, each player can ONLY perform the following 7 allowed skill:pickup_onion, pickup_dish, put_onion_in_pot, fill_dish_with_soup, deliver_soup, place_obj_on_counter, wait. Do not attempt to use any other skills that are not listed here.
 - pickup_onion(dispenser_id): Pick up an onion from a specific dispenser. Requirement: Hand is empty.
 - pickup_dish(dispenser_id): Pick up a dish. Requirement: Hand is empty.
 - put_onion_in_pot(pot_id): Put the held onion into a pot. Requirement: Holding onion, Pot is not full.
