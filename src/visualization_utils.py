@@ -1,5 +1,7 @@
 import pygame
 import re
+import platform
+import os
 
 #LLM output 자연스럽게 변경
 def render_rich_text(text, font_normal, font_bold, color=(0, 0, 0)):
@@ -295,11 +297,7 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
     temp_surf.set_alpha(alpha)
     window.blit(temp_surf, (bubble_x, bubble_y))
 
-import pygame
-import re
-import platform
-
-def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_level, layout_dict,
+def render_game(window, visualizer, env, step, target_score, reward, num_AI, visual_level, layout_dict,
                 thought_msg=None, show_intention=True):
     if not window or not visualizer:
         return
@@ -329,9 +327,10 @@ def render_game(window, visualizer, env, step, horizon, reward, num_AI, visual_l
     window.fill((255, 255, 255)) 
     screen_width, screen_height = window.get_size()
     
-    # 💡 [수정] arial 대신 korean_font_name 적용
     font_header = pygame.font.SysFont(korean_font_name, 30, bold=True)
-    info_text = font_header.render(f"Step: {step}/{horizon} | Reward: {reward}", True, (0, 0, 0))
+    
+    # 💡 [수정] 스텝은 글자 없이 숫자만 표시하고, 점수 정보와 함께 렌더링
+    info_text = font_header.render(f"Step: {step} | 점수: {reward} / {target_score}", True, (0, 0, 0))
     window.blit(info_text, (10, 10))
 
     # 3. 맵 렌더링

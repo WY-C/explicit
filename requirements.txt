@@ -1,13 +1,97 @@
-openai==0.27.8
-# transformers
-# tiktoken==0.3.0 ## require python>=3.8
-# tensorflow==2.10 ## python>=3.8 only support tf2.10+ without tf1.15
-# torch
-tensorflow==1.13.1
-# mpi4py==3.1.4
-pandas==1.0.5 # with default numpy==1.21.6
-scipy==1.5.2
+absl-py==2.1.0
+aiohttp==3.8.6
+aiosignal==1.3.1
+ale-py==0.8.1
+astor==0.8.1
+async-timeout==4.0.3
+asynctest==0.13.0
+attrs==24.2.0
+backcall==0.2.0
+certifi @ file:///croot/certifi_1671487769961/work/certifi
+charset-normalizer==3.4.4
+click==8.1.8
+cloudpickle==2.2.1
+comm==0.1.4
+cycler==0.11.0
+decorator==5.1.1
+dill==0.3.7
+filelock==3.12.2
+frozenlist==1.3.3
+fsspec==2023.1.0
+gast==0.6.0
+glob2==0.7
+grpcio==1.62.3
+gym==0.26.2
+gym-notices==0.1.0
+h5py==3.8.0
+huggingface-hub==0.16.4
+idna==3.10
+importlib-metadata==6.7.0
+importlib-resources==5.12.0
+ipython==7.34.0
+ipywidgets==8.1.8
+jedi==0.19.2
+joblib==1.3.2
+jupyterlab_widgets==3.0.16
+Keras-Applications==1.0.8
+Keras-Preprocessing==1.1.2
+kiwisolver==1.4.5
+Markdown==3.4.4
+markdown-it-py==2.2.0
+MarkupSafe==2.1.5
 matplotlib==3.0.3
-seaborn==0.9.0
+matplotlib-inline==0.1.6
+mdurl==0.1.2
+mock==5.2.0
+mpi4py @ file:///croot/mpi4py_1671223370575/work
+multidict==6.0.5
+numpy==1.21.6
+nvidia-cublas-cu11==11.10.3.66
+nvidia-cuda-nvrtc-cu11==11.7.99
+nvidia-cuda-runtime-cu11==11.7.99
+nvidia-cudnn-cu11==8.5.0.96
+openai==0.27.8
+opencv-python==4.12.0.88
+-e git+https://github.com/WY-C/explicit@f781e7b005a2737dfefda67e3d6910beabfc6721#egg=overcooked_ai&subdirectory=lib/overcooked_ai
+packaging==24.0
+pandas==1.0.5
+parso==0.8.5
+patsy==1.0.2
+pexpect==4.9.0
+pickleshare==0.7.5
+prompt_toolkit==3.0.48
 protobuf==3.20.3
+ptyprocess==0.7.0
+pygame==2.1.0
+Pygments==2.17.2
+pyparsing==3.1.4
+python-dateutil==2.9.0.post0
+pytz==2025.2
+PyYAML==6.0.1
+pyzmq==26.2.1
+regex==2024.4.16
+requests==2.31.0
 rich==13.5.2
+safetensors==0.3.1
+scipy==1.5.2
+seaborn==0.9.0
+six==1.17.0
+-e git+https://github.com/PKU-Alignment/ProAgent.git@8aa0e6563b368d2220e0ac3fff44d0d971b5715b#egg=stable_baselines&subdirectory=lib/stable-baselines
+statsmodels==0.13.5
+tensorboard==1.13.1
+tensorflow==1.13.1
+tensorflow-estimator==1.13.0
+termcolor==2.3.0
+tokenizers==0.13.3
+torch==1.13.1
+tqdm==4.67.1
+traitlets==5.9.0
+transformers==4.30.2
+typing_extensions==4.7.1
+urllib3==2.0.7
+wcwidth==0.2.14
+Werkzeug==2.2.3
+widgetsnbextension==4.0.15
+yarl==1.9.4
+zipp==3.15.0
+zmq==0.0.0

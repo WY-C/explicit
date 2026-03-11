@@ -30,8 +30,8 @@ In this game, each player can ONLY perform the following 7 allowed skill:pickup_
 
 Output Format (STRICTLY FOLLOW THIS):
     Analysis: [Brief situation analysis]
-    Intention for Player {partner_id}: "[Action]"
-    Plan for Player {my_id}: "[Action]"
+    Intention for Player {partner_id}: "[Skill]"
+    Plan for Player {my_id}: "[Skill]"
 
 Here are few examples:
 <example>
