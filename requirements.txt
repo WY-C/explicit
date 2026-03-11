@@ -7,7 +7,7 @@ async-timeout==4.0.3
 asynctest==0.13.0
 attrs==24.2.0
 backcall==0.2.0
-certifi @ file:///croot/certifi_1671487769961/work/certifi
+certifi==2022.12.7
 charset-normalizer==3.4.4
 click==8.1.8
 cloudpickle==2.2.1
@@ -43,7 +43,7 @@ matplotlib==3.0.3
 matplotlib-inline==0.1.6
 mdurl==0.1.2
 mock==5.2.0
-mpi4py @ file:///croot/mpi4py_1671223370575/work
+mpi4py==3.1.4
 multidict==6.0.5
 numpy==1.21.6
 nvidia-cublas-cu11==11.10.3.66
@@ -52,13 +52,14 @@ nvidia-cuda-runtime-cu11==11.7.99
 nvidia-cudnn-cu11==8.5.0.96
 openai==0.27.8
 opencv-python==4.12.0.88
--e git+https://github.com/WY-C/explicit@f781e7b005a2737dfefda67e3d6910beabfc6721#egg=overcooked_ai&subdirectory=lib/overcooked_ai
+overcooked-ai==0.0.1
 packaging==24.0
 pandas==1.0.5
 parso==0.8.5
 patsy==1.0.2
 pexpect==4.9.0
 pickleshare==0.7.5
+pip==22.3.1
 prompt_toolkit==3.0.48
 protobuf==3.20.3
 ptyprocess==0.7.0
@@ -75,8 +76,9 @@ rich==13.5.2
 safetensors==0.3.1
 scipy==1.5.2
 seaborn==0.9.0
+setuptools==65.6.3
 six==1.17.0
--e git+https://github.com/PKU-Alignment/ProAgent.git@8aa0e6563b368d2220e0ac3fff44d0d971b5715b#egg=stable_baselines&subdirectory=lib/stable-baselines
+stable-baselines==2.5.1a0
 statsmodels==0.13.5
 tensorboard==1.13.1
 tensorflow==1.13.1
@@ -91,6 +93,7 @@ typing_extensions==4.7.1
 urllib3==2.0.7
 wcwidth==0.2.14
 Werkzeug==2.2.3
+wheel==0.38.4
 widgetsnbextension==4.0.15
 yarl==1.9.4
 zipp==3.15.0
