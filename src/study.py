@@ -6,10 +6,10 @@ import csv
 from argparse import ArgumentParser
 from main import main as run_overcooked_game, get_parser, TARGET_SCORES
 
-# 💡 [수정] 맵이 3개로 줄었으므로 3x3 라틴 방진으로 변경
+# 💡 맵이 3개로 줄었으므로 3x3 라틴 방진으로 변경
 LATIN_SQUARE_MAPS_3 = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
-# 💡 [수정] 맵 A 제외
-MAP_POOL = {'B': 'asymmetric_advantages', 'C': 'coordination_ring', 'D': 'counter_circuit'}
+
+MAP_POOL = {'A': 'asymmetric_advantages', 'B': 'coordination_ring', 'C': 'counter_circuit'}
 
 CONDITION_SETTINGS = {
     0: {"async": True,  "vis": 0, "show_intention": False, "name": "RT_None"},
@@ -34,21 +34,23 @@ LATIN_SQUARE_5 = [
 ]
 
 def get_experimental_plan(pid, env_type):
-    # 💡 [수정] 맵 키 리스트에서 A 제외
-    map_keys = ['B', 'C', 'D']
+    map_keys = ['A', 'B', 'C']
     
-    # 💡 [수정] 3x3 라틴 방진을 사용하여 맵 순서 할당 (3명 주기로 반복)
-    selected_map_keys = [map_keys[i] for i in LATIN_SQUARE_MAPS_3[(pid - 1) % 3]]
+    # env_type에 따라 맵 순서 시작점을 다르게 설정 (sync일 경우 인덱스를 1칸 밉니다)
+    map_offset = 0 if env_type == 'async' else 1
+    map_index = (pid - 1 + map_offset) % 3
+    
+    selected_map_keys = [map_keys[i] for i in LATIN_SQUARE_MAPS_3[map_index]]
     
     plan = []
     base_start_cond = (pid - 1) % 5 
     
     # env_type에 따라 사용할 조건 ID 범위의 시작점(오프셋) 결정
-    offset = 0 if env_type == 'async' else 5
+    cond_offset = 0 if env_type == 'async' else 5
     
     for block_idx, m_key in enumerate(selected_map_keys):
         for c_id in LATIN_SQUARE_5[(base_start_cond + block_idx) % 5]:
-            actual_cond_id = c_id + offset
+            actual_cond_id = c_id + cond_offset
             plan.append({"block": block_idx + 1, "layout_key": m_key, "layout_name": MAP_POOL[m_key], "cond_id": actual_cond_id, "map": m_key})
     return plan
 
@@ -79,8 +81,8 @@ def wait_for_user(surface, title, subtitle, target_score=None, is_async=None):
     if is_async is not None:
         txt = "⚡ 실시간 환경" if is_async else "⏳ 비실시간 환경"
         surface.blit(f24.render(txt, True, (100, 255, 100)), (450 - f24.size(txt)[0]//2, y))
-    
-    surface.blit(f30.render("'U' 키를 누르면 시작합니다.", True, (180, 180, 180)), (450 - f30.size("'U' 키를 누르면 시작합니다.")[0]//2, 500))
+
+    surface.blit(f30.render("'U' 키를 누르세요.", True, (180, 180, 180)), (450 - f30.size("'U' 키를 누르세요.")[0]//2, 500))
     pygame.display.flip()
     
     waiting = True
@@ -106,10 +108,13 @@ if __name__ == '__main__':
     parser.add_argument('--pid', type=int, required=True)
     # 실험 환경 타입 인자 추가 (필수)
     parser.add_argument('--study_type', type=str, choices=['async', 'sync'], required=True, help="실험 환경 선택: 'async'(0~4번 조건) 또는 'sync'(5~9번 조건)")
+    # 이어서 시작할 수 있도록 trial 인자 추가 (기본값 1)
+    parser.add_argument('--trial', type=int, default=1, help="특정 세션(1부터 시작)부터 실험을 시작합니다.")
     
     args = parser.parse_args()
     pid = args.pid
     env_type = args.study_type
+    start_trial = args.trial
     
     study_plan = get_experimental_plan(pid, env_type)
     total_sessions = len(study_plan) # 블록당 5개 조건 * 3블록 = 총 15세션
@@ -117,12 +122,14 @@ if __name__ == '__main__':
     pygame.init()
     screen = pygame.display.set_mode((900, 600))
     
-    for i, session in enumerate(study_plan):
+    # 지정된 trial부터 루프 시작 (i는 원래 세션의 인덱스를 유지)
+    for i in range(start_trial-1, total_sessions):
+        session = study_plan[i]
         cond = CONDITION_SETTINGS[session['cond_id']]
         target = TARGET_SCORES.get(session['layout_name'], 60)
         
-        # 화면에 현재 진행 중인 환경(async/sync)과 총 세션 수(15) 반영
-        wait_for_user(screen, f"PID: {pid} ({env_type.upper()}) | 세션 {i+1}/{total_sessions}", f"맵: {session['map']}", target, cond['async'])
+        # 💡 [수정] 화면에 표시되는 세션 번호를 {i+1}로 변경하여 사용자가 입력한 trial과 시각적으로 일치시킴
+        wait_for_user(screen, f"PID: {pid} ({env_type.upper()}) | 세션 {i+1}/{total_sessions}", f"조건: {session['map']} - {session['cond_id']}", target, cond['async'])
 
         # main.py가 반환하는 실제 플레이 시간(duration)을 언패킹
         score, step, col, duration = run_overcooked_game({
@@ -137,5 +144,8 @@ if __name__ == '__main__':
         # 블록 하나당 조건이 5개이므로, 5의 배수마다 휴식 (마지막 세션 제외)
         if (i + 1) % 5 == 0 and (i + 1) < total_sessions: 
             wait_for_user(screen, "블록 종료", "잠시 휴식 후 진행하세요.")
+        elif (i+1) == total_sessions:
+            wait_for_user(screen, "실험 종료", "모든 세션이 완료되었습니다. 참여해주셔서 감사합니다!")
+        
             
     pygame.quit()

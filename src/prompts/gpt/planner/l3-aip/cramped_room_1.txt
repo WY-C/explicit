@@ -22,7 +22,7 @@ Instructions:
 	(e.g., If [P0:2, P1:5], Player 0 is CLOSER because 2 < 5.)
 
 Skill:
-In this game, each player can ONLY perform the following 7 allowed skill:pickup_onion, pickup_dish, put_onion_in_pot, fill_dish_with_soup, deliver_soup, place_obj_on_counter, wait. Do not attempt to use any other skills that are not listed here.
+In this game, each player can ONLY perform the following 6 allowed skill:pickup_onion, pickup_dish, put_onion_in_pot, fill_dish_with_soup, deliver_soup, place_obj_on_counter. Do not attempt to use any other skills that are not listed here.
 - pickup_onion(dispenser_id): Pick up an onion from a specific dispenser. Requirement: Hand is empty.
 - pickup_dish(dispenser_id): Pick up a dish. Requirement: Hand is empty.
 - put_onion_in_pot(pot_id): Put the held onion into a pot. Requirement: Holding onion, Pot is not full.
@@ -74,10 +74,11 @@ Plan for Player 1: "put_onion_in_pot(0)"
 </example>
 
 <example>
-Layout: <OnionD 0> [P0:5, P1:2]; <DishD 0> [P0:2, P1:6]; <Pot 0> [P0:1, P1:4]; <Serve 0> [P0:6, P1:5]; 
-Scene 75: <Player 0> holds one dish at (2, 2). <Player 1> holds one onion at (4, 3). <Player 0> History: Moved: (1, 2) -> (2, 2). 
+Layout: <OnionD 0> [P0:5, P1:2]; <DishD 0> [P0:2, P1:6]; <Pot 0> [P0:1, P1:4]; <Serve 0> [P0:6, P1:5];
+Scene 75: <Player 0> holds nothing at (2, 2). <Player 1> holds one onion at (4, 3).
+<Player 0> History: Moved: (1, 2) -> (2, 2).
 Kitchen states: <Pot 0> starts cooking, ready in 10 steps.
-Analysis: Pot 0 is currently cooking and cannot accept any more onions. Player 1 holds an onion, which blocks their hands. To free their hands and prepare for the next tasks (like delivering), Player 1 MUST place the onion on a counter. Meanwhile, Player 0 already holds a dish and is much closer to Pot 0 (1 < 4). Since the soup will be ready soon, Player 0 should wait near the pot to plate the soup.
-Intention for Player 0: "wait()"
+Analysis: Pot 0 is currently cooking and cannot accept any more onions. Player 1 holds an onion, which blocks their hands. To free their hands and prepare for the next tasks (like delivering), Player 1 MUST place the onion on a counter. Meanwhile, Player 0 is empty-handed and is close to DishD 0. Since the soup will be ready soon, Player 0 should prepare by picking up a dish.
+Intention for Player 0: "pickup_dish(0)"
 Plan for Player 1: "place_obj_on_counter()"
 </example>
