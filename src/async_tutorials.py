@@ -43,9 +43,9 @@ def run_tutorial_step(pid, multi, is_async, visual_level, layout, title, descrip
 
     # 게임 중에 띄울 설명 텍스트를 args에 추가하여 tutorial.py 내부에서 사용할 수 있게 전달
     if visual_level == 2:
-        args.guide_text = "초록색: 에이전트의 plan / 파란색: 에이전트가 추론한 player의 plan (본인의 plan만 띄울 수도 있고, plan+추론 과정일 수도 있습니다.)"
+        args.guide_text = "초록색: 에이전트의 plan / 파란색: 에이전트가 추론한 player의 plan (조건에 따라서, 본인의 plan만 띄울 수도 있고, plan+추론 과정일 수도 있습니다.)"
     elif visual_level == 1:
-        args.guide_text = "상단: 추론한 player의 plan / 하단: 에이전트의 plan (본인의 plan만 띄울 수도 있고, plan+추론 과정일 수도 있습니다.)"
+        args.guide_text = "상단: 추론한 player의 plan / 하단: 에이전트의 plan (조건에 따라서, 본인의 plan만 띄울 수도 있고, plan+추론 과정일 수도 있습니다.)"
     else:
         args.guide_text = ""
 
