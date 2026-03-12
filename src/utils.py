@@ -18,7 +18,7 @@ from EIRA.EIRA import ProMediumLevelAgent as MyAgent
 from EIRA.EIRA_async import ProMediumLevelAgent as Myagent_async
 
 from collections import defaultdict
-from stable_baselines import GAIL
+# from stable_baselines import GAIL
 
 
 BC_SAVE_DIR = "../models/bc_runs/"
@@ -55,11 +55,11 @@ def make_agent(alg:str, mdp, layout, **gptargs):
     elif alg == "Random":
         agent = RandomAgent()
 
-    elif alg == "BC":
-        seed_id = 0 
-        run_dir = f"{OLD_LAYOUTS[layout]}_bc_test_seed{seed_id}"  
-        print(f'using seed = {run_dir}')
-        agent, config = get_bc_agent_from_saved(run_dir)
+    # elif alg == "BC":
+    #     seed_id = 0 
+    #     run_dir = f"{OLD_LAYOUTS[layout]}_bc_test_seed{seed_id}"  
+    #     print(f'using seed = {run_dir}')
+    #     agent, config = get_bc_agent_from_saved(run_dir)
 
     elif alg == "ProAgent" or alg == "Greedy" or alg == "EIRA" or alg == "EIRAAsync":
         MLAM_PARAMS = {
@@ -181,9 +181,9 @@ def get_model_policy(step_fn, sim_threads, is_joint_action=False):
 
 ### inherit only for BC
 
-def get_bc_agent_from_saved(model_name, no_waits=False):
-    model, bc_params = load_bc_model_from_path(model_name)
-    return get_bc_agent_from_model(model, bc_params, no_waits), bc_params
+# def get_bc_agent_from_saved(model_name, no_waits=False):
+#     model, bc_params = load_bc_model_from_path(model_name)
+#     return get_bc_agent_from_model(model, bc_params, no_waits), bc_params
 
 def get_bc_agent_from_model(model, bc_params, no_waits=False):
     mdp = OvercookedGridworld.from_layout_name(**bc_params["mdp_params"])
@@ -211,12 +211,12 @@ def get_bc_agent_from_model(model, bc_params, no_waits=False):
 
     return ImitationAgentFromPolicy(state_policy, encoded_state_policy, no_waits=no_waits, mlp=mlp)
 
-def load_bc_model_from_path(model_name):
-    bc_metadata = load_pickle(BC_SAVE_DIR + model_name + "/bc_metadata")
-    bc_params = bc_metadata["bc_params"]   
+# def load_bc_model_from_path(model_name):
+#     bc_metadata = load_pickle(BC_SAVE_DIR + model_name + "/bc_metadata")
+#     bc_params = bc_metadata["bc_params"]   
     
-    model = GAIL.load(BC_SAVE_DIR + model_name + "/model")
-    return model, bc_params
+#     model = GAIL.load(BC_SAVE_DIR + model_name + "/model")
+#     return model, bc_params
 
 
 class ImitationAgentFromPolicy(AgentFromPolicy):

@@ -31,7 +31,7 @@ class ProAgent(object):
     """
     This agent uses GPT-3.5 to generate actions.
     """
-    def __init__(self, model="Qwen/Qwen2-VL-7B-Instruct-AWQ"):
+    def __init__(self, model=""):
         self.agent_index = None
         self.model = model
 

@@ -4,7 +4,6 @@ import time
 from typing import Union
 from .utils import convert_messages_to_prompt, retry_with_exponential_backoff
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 # 토큰 제한 테이블 (그대로 유지)
 TOKEN_LIMIT_TABLE = {
     "text-davinci-003": 4080,
@@ -28,7 +27,7 @@ class Module(object):
                  model="Qwen/Qwen3-VL-8B-Instruct",
                  retrival_method="recent_k",
                  K=3,
-                 api_base="http://192.168.0.19:8000/v1", # [추가] 기본값 설정
+                 api_base="http://localhost:8000/v1", # [추가] 기본값 설정
                  api_key=None):                        # [추가]
         '''
         args:  

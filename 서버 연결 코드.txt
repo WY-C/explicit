@@ -1,0 +1,8 @@
+python -m vllm.entrypoints.openai.api_server   --model Qwen/Qwen3-VL-8B-Instruct   --dtype bfloat16   --tensor-parallel-size 2   --gpu-memory-utilization 0.8   --max-model-len 16398   --enable-prefix-caching   --port 8000
+
+
+ssh -L 8000:192.168.0.19:8000 noward
+
+
+python study.py --pid 10000 --study_type sync
+python study.py --pid 10000 --study_type async

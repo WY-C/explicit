@@ -28,7 +28,7 @@ In this game, each player can ONLY perform the following 7 allowed skill:pickup_
 - put_onion_in_pot(pot_id): Put the held onion into a pot. Requirement: Holding onion, Pot is not full.
 - fill_dish_with_soup(pot_id): Fill the held dish with soup. Requirement: Holding dish, Soup is ready.
 - deliver_soup(serving_id): Deliver soup. Requirement: Holding soup.
-- place_obj_on_counter(): Place the held item on a specific counter. Requirement: Hand is not empty
+- place_obj_on_counter(): Place the held item on a counter. Requirement: Hand is not empty
 
 Output Format (STRICTLY FOLLOW THIS):
     Analysis: [Brief situation analysis]
