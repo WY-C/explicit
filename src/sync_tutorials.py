@@ -49,7 +49,7 @@ def run_tutorial_step(pid, multi, is_async, visual_level, layout, title, descrip
     else:
         args.guide_text = ""
 
-    mdp = OvercookedGridworld.from_grid(["XXXXPXXXX", "O       D", "X      2X", "X   1   X", "XXXXSXXXX"])
+    mdp = OvercookedGridworld.from_grid(["XXXPXXX", "O     D", "X    2X", "X  1  X", "XXXSXXX"])
     env = OvercookedEnv(mdp=mdp, horizon=9999)
     vis = StateVisualizer()
     
@@ -64,12 +64,16 @@ def run_tutorial_step(pid, multi, is_async, visual_level, layout, title, descrip
         ai.reset()
     
     start_t = time.time()
-    score, step, col = run_tutorial(env, screen, vis, ai_agent=ai, args=args)
-    log_summary_score(pid, 0, ("Phase1", "tutorial_grid"), -100 - step_id, log_name, score, step, col, time.time() - start_t)
+    
+    # 💡 튜토리얼도 혹시 모를 상황에 대비해 안전하게 언패킹
+    tut_result = run_tutorial(env, screen, vis, ai_agent=ai, args=args)
+    score, step, col = tut_result[:3]
+    
+    log_summary_score(pid, 0, ("sync", "tutorial_grid"), -100 - step_id, log_name, score, step, col, time.time() - start_t)
 
 def run_main_step(pid, layout, is_async, visual_level, cond_name, title, description, screen):
     # 1. 시작 대기 화면 (U 키 대기) - 원래대로 롤백
-    vu.draw_centered_text(screen, f"[적응 단계] ", f" 'U' 키를 눌러 시작하세요", color=(0, 255, 100))
+    vu.draw_centered_text(screen, f"[실력 측정] ", f" 'U' 키를 눌러 시작하세요", color=(0, 255, 100))
     waiting = True
     while waiting:
         for event in pygame.event.get():
@@ -89,13 +93,16 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
 
     start_t = time.time()
     
-    # config 딕셔너리에 guide_text를 추가하여 main.py로 전달
-    score, step, col = run_overcooked_game({
+    # 💡 에러 발생 부분 수정: 반환값을 하나의 튜플로 받은 뒤, 가장 앞의 3개만 잘라서 변수에 할당합니다.
+    main_result = run_overcooked_game({
         'layout': layout, 'async': is_async, 'visual_level': visual_level, 'name': cond_name, 
         'log_dir': f"experiments/PID_{pid}/logs", 'episode': 1, 'horizon': 400, 
         'p0': 'Human', 'p1': 'EIRAAsync', 'show_intention': True, 'render': True,
         'guide_text': guide_text
     }, surface=screen)
+    
+    score, step, col = main_result[:3]
+    
     log_summary_score(pid, 0, ("Phase1", layout), -1 if "Baseline" in cond_name else -2, cond_name, score, step, col, time.time() - start_t)
 
 if __name__ == "__main__":
@@ -118,6 +125,6 @@ if __name__ == "__main__":
         run_tutorial_step(pid, m, a, v, "tutorial_grid", title, desc, ln, i+1, screen)
     
     # run_main_step(pid, "simple", True, 2, "Phase1_Practice", "연습 세션", "본 맵에서 AI 하이라이트를 보며 연습합니다", screen)
-    run_main_step(pid, "cramped_room", False, 0, "Phase1_Baseline", "베이스라인 측정", "아무 정보 없이 협업을 수행합니다", screen)
+    run_main_step(pid, "cramped_room", False, 0, "sync_baseline", "베이스라인 측정", "아무 정보 없이 협업을 수행합니다", screen)
     
     pygame.quit()

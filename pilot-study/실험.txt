@@ -1,0 +1,6 @@
+python single_tutorial.py --pid
+python sync_tutorial.py --pid
+python async_tutorial.py --pid
+
+
+python study.py --pid --study_type --trial

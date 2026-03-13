@@ -343,7 +343,6 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
     grid_width, grid_height = len(env.mdp.terrain_mtx[0]), len(env.mdp.terrain_mtx)
     tile_w, tile_h = surf_width / grid_width, surf_height / grid_height
 
-
     # 5. [Speech Bubbles] 말풍선 렌더링 (💡 Level 1 전용: 자연어)
     if visual_level == 1:
         bubbles_to_draw = []
@@ -430,7 +429,7 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
                 draw_tail=show_tail
             )
 
-    # 6. 🚨 [Visual Level 2] 목표 타일 하이라이트 전용 로직 (💡 Level 3에서 2로 변경) 🚨
+    # 6. 🚨 [Visual Level 2] 목표 타일 하이라이트 전용 로직
     elif visual_level == 2 and thought_msg:
         try:
             highlight_for_inference_coords, highlight_for_plan_coords = parse_separate_highlights(thought_msg, layout_dict, num_AI=num_AI)
@@ -442,7 +441,7 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
             else: 
                 inf_color, plan_color = highlight_color_blue, highlight_color_green  
 
-            # 1. AI의 행동 계획 (Plan) 그리기 - 물음표 없음
+            # 1. AI의 행동 계획 (Plan) 그리기
             if highlight_for_plan_coords:
                 s_plan = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
                 s_plan.fill((*plan_color, 100))
@@ -452,7 +451,7 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
                     window.blit(s_plan, (dx, dy))
                     pygame.draw.rect(window, plan_color, pygame.Rect(dx, dy, tile_w, tile_h), 3)
 
-            # 2. 파트너 행동 예측 (Inference) 그리기 - 타일 중앙에 물음표(?) 추가
+            # 2. 파트너 행동 예측 (Inference) 그리기
             if highlight_for_inference_coords:
                 s_inf = pygame.Surface((int(tile_w), int(tile_h)), pygame.SRCALPHA)
                 s_inf.fill((*inf_color, 100))

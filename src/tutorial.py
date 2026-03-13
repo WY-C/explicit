@@ -124,9 +124,9 @@ def render_tutorial_game(window, visualizer, env, step, reward, visual_level, la
             window.blit(f_step.render("▶ 하단: 에이전트의 plan", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 105))
             
         lines = [
-        "(※ 에이전트의 plan만 나오거나,",
-        "에이전트의 plan과 추론과정이 모두 ",
-        "표현될 수 있습니다.)"
+        "(※ 조건에 따라서, 에이전트의 plan만",
+        "표현되거나, 에이전트의 plan과",
+        "추론과정이 모두 표현될 수 있습니다.)"
         ]
 
         for i, line in enumerate(lines):
