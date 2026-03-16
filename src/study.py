@@ -143,7 +143,7 @@ if __name__ == '__main__':
 
         # 블록 하나당 조건이 5개이므로, 5의 배수마다 휴식 (마지막 세션 제외)
         if (i + 1) % 5 == 0 and (i + 1) < total_sessions: 
-            wait_for_user(screen, "블록 종료", "잠시 휴식 후 진행하세요.")
+            wait_for_user(screen, "블록 종료", "")
         elif (i+1) == total_sessions:
             wait_for_user(screen, "실험 종료", "모든 세션이 완료되었습니다. 참여해주셔서 감사합니다!")
         
