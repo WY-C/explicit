@@ -22,13 +22,13 @@ def log_summary_score(pid, block, layout, cond_id, cond_name, score, timestep, i
 def run_tutorial_step(pid, multi, is_async, visual_level, layout, title, description, log_name, step_id, screen):
     # 1. 시작 대기 화면 (U 키 대기)
     desc_text = f"{description} | " if description else ""
-    vu.draw_centered_text(screen, f"[Single Player Tutorial {step_id}/2] {title}", f"{desc_text}Press 'U' to start", color=(0, 255, 100))
+    vu.draw_centered_text(screen, f"[Tutorial {step_id}/2] {title}", f"{desc_text}Press 'U' to start", color=(0, 255, 100))
     waiting = True
     while waiting:
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_u: waiting = False
-        # 💡 [핵심 수정] 무한 루프 과부하 방지를 위한 10ms 대기 추가
+        # 무한 루프 과부하 방지를 위한 10ms 대기
         pygame.time.delay(10)
     
     # 2. 로딩 화면 표시
@@ -83,7 +83,7 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_u: waiting = False
-        # 💡 [핵심 수정] 무한 루프 과부하 방지를 위한 10ms 대기 추가
+        # 무한 루프 과부하 방지를 위한 10ms 대기
         pygame.time.delay(10)
             
     # 2. 로딩 화면 표시
@@ -108,21 +108,44 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
     log_summary_score(pid, 0, ("Phase1", layout), -1 if "Baseline" in cond_name else -2, cond_name, score, step, col, time.time() - start_t)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(); parser.add_argument('--pid', type=int, required=True)
-    args = parser.parse_args(); pid = args.pid
-    pygame.init(); screen = pygame.display.set_mode((900, 750))
-    pygame.display.set_caption(f"Phase 1 - PID: {pid}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pid', type=int, required=True)
+    # 💡 [핵심 추가] --type 인자 추가 (single, sync, async 중 택 1)
+    parser.add_argument('--type', type=str, required=True, choices=['single', 'sync', 'async'], help="Experiment type: single, sync, or async")
     
+    args = parser.parse_args()
+    pid = args.pid
+    exp_type = args.type
+    
+    pygame.init()
+    screen = pygame.display.set_mode((900, 750))
+    pygame.display.set_caption(f"Phase 1 - PID: {pid} ({exp_type})")
+    
+    # 전체 튜토리얼 스텝 정의 (주석 해제)
     tut_steps = [
         (False, False, 0, "Non-Real-time", "", "Tut_S_NRT"), 
         (False, True, 0, "Real-time", "", "Tut_S_RT"), 
-        # (True, False, 2, "Multi Non-Real-time (H)", "", "Tut_M_NRT_H"), 
-        # (True, False, 1, "Multi Non-Real-time (N)", "", "Tut_M_NRT_N"), 
-        # (True, True, 2, "Multi Real-time (H)", "Real-time AI Highlight", "Tut_M_RT_H"), 
-        # (True, True, 1, "Multi Real-time (N)", "Real-time AI Bubble", "Tut_M_RT_N")
+        (True, False, 2, "Multi Non-Real-time (H)", "", "Tut_M_NRT_H"), 
+        (True, False, 1, "Multi Non-Real-time (N)", "", "Tut_M_NRT_N"), 
+        (True, True, 2, "Multi Real-time (H)", "Real-time AI Highlight", "Tut_M_RT_H"), 
+        (True, True, 1, "Multi Real-time (N)", "Real-time AI Bubble", "Tut_M_RT_N")
     ]
     
-    for i, (m, a, v, title, desc, ln) in enumerate(tut_steps):
+    # 💡 [핵심 추가] 인자에 따라 실행할 튜토리얼 스텝 슬라이싱
+    if exp_type == 'single':
+        active_steps = tut_steps[0:2]
+    elif exp_type == 'sync':
+        active_steps = tut_steps[2:4]
+    elif exp_type == 'async':
+        active_steps = tut_steps[4:6]
+    
+    # 선택된 튜토리얼 스텝만 실행
+    for i, (m, a, v, title, desc, ln) in enumerate(active_steps):
         run_tutorial_step(pid, m, a, v, "tutorial_grid", title, desc, ln, i+1, screen)
+    
+    # 💡 [핵심 추가] 본 게임(run_main_step)은 sync나 async일 때만 실행
+    if exp_type in ['sync', 'async']:
+        #run_main_step(pid, "simple", True, 2, "Phase1_Practice", "Practice Session", "Practice with AI highlights on this map", screen)
+        run_main_step(pid, "cramped_room", False, 0, "Phase1_Baseline", "Baseline Measurement", "Collaborate without any AI info", screen)
     
     pygame.quit()

@@ -166,7 +166,7 @@ def main(variant, surface=None):
     mdp = get_mdp(layout_name); layout_dict = vu.generate_layout_dict(mdp)
     env = OvercookedEnv(mdp, horizon=horizon); window_surface = surface
     
-    # 창 크기를 1280x800으로 키움
+    # 💡 [핵심] 창 크기를 1280x800으로 키움
     if render and window_surface is None: window_surface = pygame.display.set_mode((1280, 800))
     visualizer = StateVisualizer(cook_time=variant.get('cook_time', 20))
 
@@ -182,7 +182,7 @@ def main(variant, surface=None):
         
         agents_list.append(agent)
     
-    # AI 에이전트의 플레이어 인덱스를 명확하게 식별
+    # 💡 [핵심] AI 에이전트의 플레이어 인덱스를 명확하게 식별
     ai_idx = 1
     for i, a in enumerate(agents_list):
         if not isinstance(a, HumanAgent):
@@ -197,7 +197,7 @@ def main(variant, surface=None):
         actual_start_time = time.time() 
         
         if render:
-            # 영문 로딩 텍스트로 변경
+            # 💡 영문 로딩 텍스트로 변경
             vu.draw_centered_text(window_surface, "Please wait...", "AI is analyzing the first action.", color=(255, 200, 0))
             pygame.display.flip()
             
@@ -222,14 +222,14 @@ def main(variant, surface=None):
             for th in init_threads:
                 th.join()
 
-            # render_game 호출 시 ai_idx 명확하게 전달
+            # 💡 [핵심] render_game 호출 시 ai_idx 명확하게 전달
             _, msg = get_combined_thought(agents_list)
             vu.render_game(window_surface, visualizer, env, 0, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True))
             
-            # 영문 안내 문구 적용 및 시스템 기본 폰트 사용
+            # 💡 영문 안내 문구 적용 및 시스템 기본 폰트 사용
             guide_font = pygame.font.SysFont("arial", 24, bold=True)
             guide_surf = guide_font.render("Press arrow keys or SPACE to start.", True, (255, 50, 50))
-            # 창 크기 확대에 맞춘 중앙 정렬
+            # 💡 창 크기 확대에 맞춘 중앙 정렬
             guide_rect = guide_surf.get_rect(center=(640, 60))
             window_surface.blit(guide_surf, guide_rect)
             pygame.display.flip()
@@ -316,16 +316,7 @@ def main(variant, surface=None):
 
             _, reward, is_tout, _ = env.step(tuple(actions)); r_total += reward
             done = is_tout or (r_total >= target_score); _, msg = get_combined_thought(agents_list)
-            
-            # 💡 [핵심] 각 플레이어(P0, P1)의 행동을 로깅 정보에 추가
-            logger.log_step({
-                "timestep": t, 
-                "p0_action": str(actions[0]), 
-                "p1_action": str(actions[1]), 
-                "inter_collision": is_col, 
-                "reward": reward, 
-                "cumulative_reward": r_total
-            })
+            logger.log_step({"timestep": t, "inter_collision": is_col, "reward": reward, "cumulative_reward": r_total})
             
             if render and async_mode: vu.render_game(window_surface, visualizer, env, t, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True))
             if done: final_t = t; break

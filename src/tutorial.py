@@ -80,28 +80,46 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
         _, reward, _, _ = env.step((human_action, ai_action))
         if reward > 0: served += 1
         step += 1
-        logger.log_step({"timestep": step, "inter_collision": is_col, "reward": reward, "cumulative_reward": served})
+        logger.log_step({
+            "timestep": step, 
+            "joint_action": [human_action, ai_action], 
+            "inter_collision": is_col, 
+            "reward": reward, 
+            "cumulative_reward": served
+        })
         if args.is_async:
             render_tutorial_game(screen, visualizer, env, step, served, args.visual_level, layout_dict, thought_msg=current_thought)
             
     return served, step, col_total
 
-def render_tutorial_game(window, visualizer, env, step, reward, visual_level, layout_dict, thought_msg=None):
-    vu.render_game(window, visualizer, env, step, 9999, reward, 1, visual_level, layout_dict, thought_msg, True)
-    os_name = platform.system()
-    k_font = 'malgungothic' if os_name == 'Windows' else 'applegothic' if os_name == 'Darwin' else 'nanumgothic'
-    f_title = pygame.font.SysFont(k_font, 20, bold=True); f_small = pygame.font.SysFont(k_font, 14); f_step = pygame.font.SysFont(k_font, 15, bold=True)
+def render_tutorial_game(window, visualizer, env, step, served_count, visual_level, layout_dict, thought_msg=None):
+    # 💡 [핵심 변경] 접시 1개당 20점 계산 (served_count * 20), 튜토리얼 목표 점수는 40점으로 고정
+    vu.render_game(window, visualizer, env, step, 40, served_count * 20, 1, visual_level, layout_dict, thought_msg, True)
+    
+    # 영문 텍스트에 맞게 폰트 설정
+    f_title = pygame.font.SysFont("arial", 20, bold=True)
+    f_small = pygame.font.SysFont("arial", 14)
+    f_step = pygame.font.SysFont("arial", 15, bold=True)
     
     # 왼쪽 아래 가이드 박스 (조작 및 튜토리얼 미션)
     guide_x, guide_y = 20, 470
-    pygame.draw.rect(window, (252, 252, 252), (guide_x, guide_y, 280, 260), border_radius=12); pygame.draw.rect(window, (60, 60, 60), (guide_x, guide_y, 280, 260), 2, border_radius=12)
-    window.blit(f_title.render("🎮 게임 조작 안내", True, (0, 0, 0)), (guide_x + 15, guide_y + 15))
+    pygame.draw.rect(window, (252, 252, 252), (guide_x, guide_y, 280, 260), border_radius=12)
+    pygame.draw.rect(window, (60, 60, 60), (guide_x, guide_y, 280, 260), 2, border_radius=12)
+    
+    window.blit(f_title.render("Game Controls", True, (0, 0, 0)), (guide_x + 15, guide_y + 15))
     pygame.draw.line(window, (200, 200, 200), (guide_x + 15, guide_y + 45), (guide_x + 265, guide_y + 45), 1)
-    window.blit(f_step.render("▶ 이동: 방향키 (상하좌우)", True, (50, 50, 50)), (guide_x + 15, guide_y + 55))
-    window.blit(f_step.render("▶ 행동: 스페이스바 (집기/놓기)", True, (50, 50, 50)), (guide_x + 15, guide_y + 80))
-    window.blit(f_title.render("📋 튜토리얼 미션", True, (0, 0, 0)), (guide_x + 15, guide_y + 120))
-    mission_steps = ["1. 양파 3개를 냄비에 넣습니다.", "2. 수프가 다 끓을 때까지 기다립니다.", "3. 접시를 들고 냄비에서 수프를 담습니다.", "4. 완성된 수프를 회색 카운터에 서빙합니다."]
-    for i, txt in enumerate(mission_steps): window.blit(f_small.render(txt, True, (80, 80, 80)), (guide_x + 15, guide_y + 150 + (i * 25)))
+    window.blit(f_step.render("Move: Arrow Keys", True, (50, 50, 50)), (guide_x + 15, guide_y + 55))
+    window.blit(f_step.render("Interact: Spacebar", True, (50, 50, 50)), (guide_x + 15, guide_y + 80))
+    
+    window.blit(f_title.render("Tutorial Mission", True, (0, 0, 0)), (guide_x + 15, guide_y + 120))
+    mission_steps = [
+        "1. Put 3 onions into the pot.", 
+        "2. Wait until the soup is cooked.", 
+        "3. Grab a dish and plate the soup.", 
+        "4. Deliver the soup to the grey counter."
+    ]
+    for i, txt in enumerate(mission_steps): 
+        window.blit(f_small.render(txt, True, (80, 80, 80)), (guide_x + 15, guide_y + 150 + (i * 25)))
 
     # 오른쪽 아래 가이드 박스 (AI 시각화 안내)
     if visual_level in [1, 2]:
@@ -110,23 +128,21 @@ def render_tutorial_game(window, visualizer, env, step, reward, visual_level, la
         pygame.draw.rect(window, (60, 60, 60), (ai_guide_x, ai_guide_y, 280, 260), 2, border_radius=12)
         
         if visual_level == 2:
-            window.blit(f_title.render("💡 AI 하이라이트 안내", True, (0, 0, 0)), (ai_guide_x + 15, ai_guide_y + 15))
+            window.blit(f_title.render("AI Highlight Guide", True, (0, 0, 0)), (ai_guide_x + 15, ai_guide_y + 15))
             pygame.draw.line(window, (200, 200, 200), (ai_guide_x + 15, ai_guide_y + 45), (ai_guide_x + 265, ai_guide_y + 45), 1)
-            window.blit(f_step.render("▶ 초록색: 에이전트의 plan", True, (30, 150, 30)), (ai_guide_x + 15, ai_guide_y + 55))
-            window.blit(f_step.render("▶ 파란색: 추론한 player의 plan", True, (30, 30, 150)), (ai_guide_x + 15, ai_guide_y + 80))
-            window.blit(f_step.render("(추론 과정)", True, (30, 30, 150)), (ai_guide_x + 15, ai_guide_y + 95))
+            window.blit(f_step.render("White: AI's plan", True, (100, 100, 100)), (ai_guide_x + 15, ai_guide_y + 55))
+            window.blit(f_step.render("Blue: Prediction of your plan", True, (30, 30, 150)), (ai_guide_x + 15, ai_guide_y + 80))
         
         elif visual_level == 1:
-            window.blit(f_title.render("💡 AI 자연어 안내", True, (0, 0, 0)), (ai_guide_x + 15, ai_guide_y + 15))
+            window.blit(f_title.render("AI Bubble Guide", True, (0, 0, 0)), (ai_guide_x + 15, ai_guide_y + 15))
             pygame.draw.line(window, (200, 200, 200), (ai_guide_x + 15, ai_guide_y + 45), (ai_guide_x + 265, ai_guide_y + 45), 1)
-            window.blit(f_step.render("▶ 상단: 추론한 player의 plan", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 55))
-            window.blit(f_step.render("(추론 과정)", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 70))
-            window.blit(f_step.render("▶ 하단: 에이전트의 plan", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 105))
+            window.blit(f_step.render("Top: Prediction of your plan", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 55))
+            window.blit(f_step.render("Bottom: AI's plan", True, (50, 50, 50)), (ai_guide_x + 15, ai_guide_y + 80))
             
         lines = [
-        "(※ 조건에 따라서, 에이전트의 plan만",
-        "표현되거나, 에이전트의 plan과",
-        "추론과정이 모두 표현될 수 있습니다.)"
+            "(* Depending on the condition,",
+            "only the AI's plan may be shown,",
+            "or both the plan and prediction.)"
         ]
 
         for i, line in enumerate(lines):

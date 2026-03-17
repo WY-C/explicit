@@ -286,9 +286,14 @@ class StateVisualizer:
                         held_object_name = "soup-tomato"
                 else:
                     held_object_name = held_obj.name
-            #print("direction_name", direction_name)
+            
+            # 기본 몸통(흰색 모자 착용 상태) 렌더링
             self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), chef_frame_name(direction_name, held_object_name))
-            self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), hat_frame_name(direction_name, player_color_name))
+            
+            # 💡 [핵심 변경] AI가 항상 1번 플레이어이므로, 1번 플레이어는 색깔 모자를 덧그리지 않습니다.
+            # 이렇게 하면 AI는 기본 이미지인 '흰색 모자' 상태로 맵에 나타납니다.
+            if player_num != 1:
+                self.CHEFS_IMG.blit_on_surface(surface, self._position_in_unscaled_pixels(player.position), hat_frame_name(direction_name, player_color_name))
 
     @staticmethod
     def _soup_frame_name(ingredients_names, status):
@@ -461,4 +466,3 @@ class StateVisualizer:
                         position = Action.move_in_direction(player.position, action)
                         img =  pygame.transform.rotozoom(rescaled_arrow, direction_to_rotation[action], size)
                         self._render_on_tile_position(surface, img, position, **direction_to_aligns[action])
-                        
