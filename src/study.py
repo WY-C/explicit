@@ -6,8 +6,17 @@ import csv
 from argparse import ArgumentParser
 from main import main as run_overcooked_game, get_parser, TARGET_SCORES
 
-# 💡 맵이 3개로 줄었으므로 3x3 라틴 방진으로 변경
-LATIN_SQUARE_MAPS_3 = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
+# 💡 [핵심 수정] 3개 맵의 6가지 순열을 정의하되, 
+# 인덱스 i와 i+3이 서로 '완전한 역순(Reverse)'이 되도록 배치합니다.
+# 이렇게 하면 동일 참가자가 async와 sync에서 겪는 맵 전환(A->B 등)이 절대 겹치지 않습니다.
+BALANCED_MAP_ORDERS_6 = [
+    [0, 1, 2], # 0: A -> B -> C
+    [1, 2, 0], # 1: B -> C -> A
+    [2, 0, 1], # 2: C -> A -> B
+    [2, 1, 0], # 3: C -> B -> A (0번의 역순)
+    [0, 2, 1], # 4: A -> C -> B (1번의 역순)
+    [1, 0, 2]  # 5: B -> A -> C (2번의 역순)
+]
 
 MAP_POOL = {'A': 'asymmetric_advantages', 'B': 'coordination_ring', 'C': 'counter_circuit'}
 
@@ -36,21 +45,24 @@ LATIN_SQUARE_5 = [
 def get_experimental_plan(pid, env_type):
     map_keys = ['A', 'B', 'C']
     
-    # env_type에 따라 맵 순서 시작점을 다르게 설정 (sync일 경우 인덱스를 1칸 밉니다)
-    map_offset = 0 if env_type == 'async' else 1
-    map_index = (pid - 1 + map_offset) % 3
+    # 💡 맵 순서 오프셋 (sync일 경우 완전히 역순인 인덱스(+3)를 타게 됨)
+    map_offset = 0 if env_type == 'async' else 3
+    map_index = (pid - 1 + map_offset) % 6
     
-    selected_map_keys = [map_keys[i] for i in LATIN_SQUARE_MAPS_3[map_index]]
+    selected_map_keys = [map_keys[i] for i in BALANCED_MAP_ORDERS_6[map_index]]
     
     plan = []
-    base_start_cond = (pid - 1) % 5 
     
-    # env_type에 따라 사용할 조건 ID 범위의 시작점(오프셋) 결정
-    cond_offset = 0 if env_type == 'async' else 5
+    # 표현 방식(Condition) 순서 자체를 비틀어주기 위한 오프셋 (sync는 3칸 밀어버림)
+    cond_order_offset = 0 if env_type == 'async' else 3
+    base_start_cond = (pid - 1 + cond_order_offset) % 5 
+    
+    # env_type에 따라 사용할 조건 ID 딕셔너리 그룹(0~4 vs 5~9) 결정
+    cond_id_group_offset = 0 if env_type == 'async' else 5
     
     for block_idx, m_key in enumerate(selected_map_keys):
         for c_id in LATIN_SQUARE_5[(base_start_cond + block_idx) % 5]:
-            actual_cond_id = c_id + cond_offset
+            actual_cond_id = c_id + cond_id_group_offset
             plan.append({"block": block_idx + 1, "layout_key": m_key, "layout_name": MAP_POOL[m_key], "cond_id": actual_cond_id, "map": m_key})
     return plan
 
@@ -128,7 +140,7 @@ if __name__ == '__main__':
         cond = CONDITION_SETTINGS[session['cond_id']]
         target = TARGET_SCORES.get(session['layout_name'], 60)
         
-        # 💡 [수정] 화면에 표시되는 세션 번호를 {i+1}로 변경하여 사용자가 입력한 trial과 시각적으로 일치시킴
+        # 화면에 표시되는 세션 번호를 {i+1}로 변경하여 사용자가 입력한 trial과 시각적으로 일치시킴
         wait_for_user(screen, f"PID: {pid} ({env_type.upper()}) | 세션 {i+1}/{total_sessions}", f"조건: {session['map']} - {session['cond_id']}", target, cond['async'])
 
         # main.py가 반환하는 실제 플레이 시간(duration)을 언패킹

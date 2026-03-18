@@ -35,8 +35,11 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
     layout_dict = vu.generate_layout_dict(env.mdp)
     served, step, col_total = 0, 0, 0; current_thought = ""
     
+    # 루프 진입 전 0번째 스텝 렌더링 (처음 시작 시 검은 화면/딜레이 방지)
+    render_tutorial_game(screen, visualizer, env, step, served, args.visual_level, layout_dict, thought_msg=current_thought)
+    
     while served < 2:
-        # 💡 에이전트 타임스텝 업데이트
+        # 에이전트 타임스텝 업데이트
         if ai_agent: ai_agent.current_timestep = step + 1
         
         human_action = Action.STAY; start_t = pygame.time.get_ticks(); act_chosen = False
@@ -85,7 +88,7 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
             "joint_action": [human_action, ai_action], 
             "inter_collision": is_col, 
             "reward": reward, 
-            "cumulative_reward": served
+            "cumulative_reward": served * 20
         })
         if args.is_async:
             render_tutorial_game(screen, visualizer, env, step, served, args.visual_level, layout_dict, thought_msg=current_thought)
@@ -93,8 +96,20 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
     return served, step, col_total
 
 def render_tutorial_game(window, visualizer, env, step, served_count, visual_level, layout_dict, thought_msg=None):
-    # 💡 [핵심 변경] 접시 1개당 20점 계산 (served_count * 20), 튜토리얼 목표 점수는 40점으로 고정
-    vu.render_game(window, visualizer, env, step, 40, served_count * 20, 1, visual_level, layout_dict, thought_msg, True)
+    # 💡 [핵심 해결책] vu.render_game 내부의 강제 화면 업데이트 무력화 (Monkey Patching)
+    # 이걸 통해 vu.render_game이 화면을 먼저 송출해버려서 깜빡이는 현상을 완벽 차단합니다.
+    _original_flip = pygame.display.flip
+    _original_update = pygame.display.update
+    pygame.display.flip = lambda: None
+    pygame.display.update = lambda *args, **kwargs: None
+    
+    try:
+        # 마지막 인자 True는 AI intention 표시 옵션이므로 그대로 유지
+        vu.render_game(window, visualizer, env, step, 40, served_count * 20, 1, visual_level, layout_dict, thought_msg, True)
+    finally:
+        # 게임 렌더링이 끝나면 업데이트 함수를 원상 복구
+        pygame.display.flip = _original_flip
+        pygame.display.update = _original_update
     
     # 영문 텍스트에 맞게 폰트 설정
     f_title = pygame.font.SysFont("arial", 20, bold=True)
@@ -149,4 +164,5 @@ def render_tutorial_game(window, visualizer, env, step, served_count, visual_lev
             text = f_small.render(line, True, (100, 100, 100))
             window.blit(text, (ai_guide_x + 15, ai_guide_y + 120 + i * 20))
 
+    # 모든 요소를 온전히 다 그린 후, 여기서 최종적으로 단 한 번만 화면 업데이트!
     pygame.display.flip()
