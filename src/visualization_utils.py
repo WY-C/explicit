@@ -39,6 +39,10 @@ def transform_to_english_natural(skill_name, idx, is_thought, has_two_objs):
     
     return skill_map.get(skill_name, "Thinking...")
 
+# 이모지 뒤에 회색 배경 상자를 그리는 보조 함수
+def draw_action_icon_background(target_surf, x, y, size, corner_radius, color=(230, 230, 230)):
+    pygame.draw.rect(target_surf, color, (x, y, *size), border_radius=corner_radius)
+
 # Layout dict generation
 def generate_layout_dict(mdp):
     layout_data = {}
@@ -214,6 +218,35 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
     grid_width, grid_height = len(env.mdp.terrain_mtx[0]), len(env.mdp.terrain_mtx)
     tile_w, tile_h = surf_width / grid_width, surf_height / grid_height
 
+    # 3.5. [Object Index] 2개 이상 존재하는 오브젝트 위에 인덱스 표시 (Visual Level 1만)
+    if layout_dict and visual_level == 1:
+        font_idx = pygame.font.SysFont("arial", int(min(tile_w, tile_h) * 0.25), bold=True)
+        for obj_key, items in layout_dict.items():
+            if len(items) >= 2:
+                for item in items:
+                    idx = item['id']
+                    display_idx = idx + 1 # 0, 1 대신 1, 2로 표시
+                    gx, gy = item['position']
+                    
+                    # 해당 타일의 화면상 중앙 좌표 계산
+                    cx = start_x + (gx * tile_w) + (tile_w / 2)
+                    cy = map_start_y + (gy * tile_h) + (tile_h / 2)
+                    
+                    text_str = str(display_idx)
+                    text_color = (0, 0, 0)
+                    outline_color = (255, 255, 255) # 가독성을 위한 하얀색 테두리
+                    
+                    # 텍스트 외곽선 렌더링 (8방향)
+                    for dx, dy in [(-2,-2), (-2,2), (2,-2), (2,2), (-2,0), (2,0), (0,-2), (0,2)]:
+                        out_surf = font_idx.render(text_str, True, outline_color)
+                        out_rect = out_surf.get_rect(center=(int(cx) + dx, int(cy) + dy))
+                        window.blit(out_surf, out_rect)
+                    
+                    # 실제 텍스트 렌더링
+                    txt_surf = font_idx.render(text_str, True, text_color)
+                    txt_rect = txt_surf.get_rect(center=(int(cx), int(cy)))
+                    window.blit(txt_surf, txt_rect)
+
     # 4. [Speech Bubbles] Rendering (Level 1)
     if thought_msg and visual_level == 1:
         raw_lines = thought_msg.split('\n')
@@ -286,11 +319,8 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
                 final_w, final_h = (max_img_w, max_img_h)
                 final_icon_surf = pygame.transform.scale(temp, (final_w, final_h))
 
+            # 투명한 서피스 유지
             bg_surf = pygame.Surface(icon_size, pygame.SRCALPHA)
-            try:
-                pygame.draw.rect(bg_surf, (230, 230, 230), (0, 0, *icon_size), border_radius=8)
-            except TypeError:
-                pygame.draw.rect(bg_surf, (230, 230, 230), (0, 0, *icon_size))
             
             offset_x = (icon_size[0] - final_w) // 2
             offset_y = (icon_size[1] - final_h) // 2
@@ -298,43 +328,96 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
             
             return bg_surf
 
-        font_prefix = pygame.font.SysFont("arial", 20, bold=True)
+        # 폰트 굵기 분리: 일반 텍스트는 일반 굵기, #번호는 볼드 굵기
+        font_prefix = pygame.font.SysFont("arial", 20) 
+        font_bold = pygame.font.SysFont("arial", 20, bold=True)
+        
         line_surfs = []
+        gap = 10 # 텍스트와 이모지 사이의 여백
+
+        # 둥근 회색 배경 상자 크기 정의
+        icon_bg_size = (60, 60)
+        icon_corner_radius = 8
 
         if intention_str:
+            match_idx = re.search(r'\((0|1)\)', intention_str)
+            index_label_surf = None
+            if match_idx:
+                parsed_idx = int(match_idx.group(1))
+                display_idx = parsed_idx + 1 
+                # 번호 렌더링에 볼드 폰트 적용
+                index_label_surf = font_bold.render(f"#{display_idx}", True, (0, 0, 0))
+
             prefix = font_prefix.render("Guess you'll: ", True, (0, 0, 0))
             act_surf = get_action_surf(intention_str, is_thought=True)
             if act_surf:
-                line_w = prefix.get_width() + act_surf.get_width()
-                line_h = max(prefix.get_height(), act_surf.get_height())
+                line_w = prefix.get_width() + icon_bg_size[0] + gap
+                if index_label_surf:
+                    line_w += index_label_surf.get_width() + gap
+                line_h = max(prefix.get_height(), icon_bg_size[1])
+                
                 line_surf = pygame.Surface((line_w, line_h), pygame.SRCALPHA)
+                
                 line_surf.blit(prefix, (0, (line_h - prefix.get_height()) // 2))
-                line_surf.blit(act_surf, (prefix.get_width(), (line_h - act_surf.get_height()) // 2))
+                curr_x = prefix.get_width() + gap
+                
+                if index_label_surf:
+                    line_surf.blit(index_label_surf, (curr_x, (line_h - index_label_surf.get_height()) // 2))
+                    curr_x += index_label_surf.get_width() + gap
+                
+                # 둥근 회색 배경 상자 그리기
+                draw_action_icon_background(line_surf, curr_x, (line_h - icon_bg_size[1]) // 2, icon_bg_size, icon_corner_radius)
+                
+                # 투명한 이모지 이미지를 회색 배경 중앙에 그리기
+                line_surf.blit(act_surf, (curr_x, (line_h - act_surf.get_height()) // 2))
                 line_surfs.append(line_surf)
 
         if plan_str:
+            match_idx = re.search(r'\((0|1)\)', plan_str)
+            index_label_surf = None
+            if match_idx:
+                parsed_idx = int(match_idx.group(1))
+                display_idx = parsed_idx + 1 
+                # 번호 렌더링에 볼드 폰트 적용
+                index_label_surf = font_bold.render(f"#{display_idx}", True, (0, 0, 0))
+
             prefix = font_prefix.render("My plan: ", True, (0, 0, 0))
             act_surf = get_action_surf(plan_str, is_thought=False)
             if act_surf:
-                line_w = prefix.get_width() + act_surf.get_width()
-                line_h = max(prefix.get_height(), act_surf.get_height())
+                line_w = prefix.get_width() + icon_bg_size[0] + gap
+                if index_label_surf:
+                    line_w += index_label_surf.get_width() + gap
+                line_h = max(prefix.get_height(), icon_bg_size[1])
+                
                 line_surf = pygame.Surface((line_w, line_h), pygame.SRCALPHA)
+                
                 line_surf.blit(prefix, (0, (line_h - prefix.get_height()) // 2))
-                line_surf.blit(act_surf, (prefix.get_width(), (line_h - act_surf.get_height()) // 2))
+                curr_x = prefix.get_width() + gap
+                
+                if index_label_surf:
+                    line_surf.blit(index_label_surf, (curr_x, (line_h - index_label_surf.get_height()) // 2))
+                    curr_x += index_label_surf.get_width() + gap
+                    
+                # 둥근 회색 배경 상자 그리기
+                draw_action_icon_background(line_surf, curr_x, (line_h - icon_bg_size[1]) // 2, icon_bg_size, icon_corner_radius)
+                
+                # 투명한 이모지 이미지를 회색 배경 중앙에 그리기
+                line_surf.blit(act_surf, (curr_x, (line_h - act_surf.get_height()) // 2))
                 line_surfs.append(line_surf)
 
         if line_surfs:
+            line_spacing = 15 # 줄 사이 간격을 넓힘
             total_w = max(s.get_width() for s in line_surfs)
-            total_h = sum(s.get_height() for s in line_surfs) + (10 * (len(line_surfs) - 1)) 
+            total_h = sum(s.get_height() for s in line_surfs) + (line_spacing * (len(line_surfs) - 1)) 
             combined_surf = pygame.Surface((total_w, total_h), pygame.SRCALPHA)
             current_y = 0
             for s in line_surfs:
                 x_pos = (total_w - s.get_width()) // 2
                 combined_surf.blit(s, (x_pos, current_y))
-                current_y += s.get_height() + 10
+                current_y += s.get_height() + line_spacing
             
             px, py = get_player_screen_pos(num_AI, env, map_start_y, start_x, surf_width, surf_height)
-            draw_speech_bubble(window, combined_surf, px, py, is_thought=False, border_color=(0, 0, 0), border_width=2, alpha=200, y_offset=110, padding=6)
+            draw_speech_bubble(window, combined_surf, px, py, is_thought=False, border_color=(0, 0, 0), border_width=2, alpha=200, y_offset=135, padding=10)
 
     # 5. [Visual Level 2] Highlight Logic
     elif visual_level == 2 and thought_msg:
