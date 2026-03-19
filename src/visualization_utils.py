@@ -86,8 +86,8 @@ def parse_separate_highlights(thought_text, layout_dict, num_AI=None):
             "pickup_dish": "dish_dispenser",
             "put_onion_in_pot": "pot",
             "fill_dish_with_soup": "pot",
-            "deliver_soup": "serving",
-            "place_obj_on_counter": "counter" 
+            "deliver_soup": "serving"
+            # place_obj_on_counter는 하이라이트를 끄기 위해 매핑에서 제외!
         }
         match = re.search(r'(\w+)\(?(\d+)?\)?', act_str) 
         if match:
@@ -252,15 +252,16 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
         raw_lines = thought_msg.split('\n')
         
         icon_map = {
-            "pickup_onion": "onions", 
-            "pickup_dish": "dishes", 
+            "pickup_onion": "onions",
+            "pickup_dish": "dishes",
             "pickup_tomato": "tomatoes",
-            "put_onion_in_pot": "soup_idle_tomato_0_onion_1", 
-            "put_tomato_in_pot": "pot",
-            "fill_dish_with_soup": "soup_done_tomato_0_onion_3",
-            "deliver_soup": "SOUTH-soup-onion",
+            "put_onion_in_pot": "soup_idle_tomato_0_onion_1",
+            "fill_dish_with_soup": "SOUTH-soup-onion",
+            "deliver_soup": "serve",
+            "place_obj_on_counter": "counter", # <--- 추가된 카운터(도마) 이미지
             "wait": "stay"
-        } 
+
+            } 
 
         action_priorities = [
             ("put_onion_in_pot", 'P'), ("put_tomato_in_pot", 'P'), ("fill_dish_with_soup", 'P'),
@@ -289,7 +290,38 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
                 if skill_key in lower_content:
                     found_key = skill_key
                     break
+            
             icon_name = icon_map.get(found_key) if found_key else None
+
+            # 💡 [수정됨] 냄비에 재료를 넣을 때, 현재 냄비 상태를 ObjectState.state 구조에 맞게 파악
+            if found_key in ["put_onion_in_pot", "put_tomato_in_pot"]:
+                match_idx = re.search(r'\((\d+)\)', action_str)
+                if match_idx and layout_dict and 'pot' in layout_dict:
+                    p_idx = int(match_idx.group(1))
+                    if 0 <= p_idx < len(layout_dict['pot']):
+                        pot_pos = layout_dict['pot'][p_idx]['position']
+                        
+                        cur_onions = 0
+                        cur_tomatoes = 0
+                        
+                        if pot_pos in env.state.objects:
+                            pot_obj = env.state.objects[pot_pos]
+                            
+                            if pot_obj.name == 'soup':
+                                # overcooked_mdp.py에 정의된 대로 state는 (soup_type, num_items, cook_time) 형태의 튜플임
+                                soup_type, num_items, cook_time = pot_obj.state
+                                if soup_type == 'onion':
+                                    cur_onions = num_items
+                                elif soup_type == 'tomato':
+                                    cur_tomatoes = num_items
+
+                            if found_key == "put_onion_in_pot":
+                                next_onions = min(cur_onions + 1, 3) 
+                                icon_name = f"soup_idle_tomato_{cur_tomatoes}_onion_{next_onions}"
+                            elif found_key == "put_tomato_in_pot":
+                                next_tomatoes = min(cur_tomatoes + 1, 3)
+                                icon_name = f"soup_idle_tomato_{next_tomatoes}_onion_{cur_onions}"
+
             temp = pygame.Surface((40, 40), pygame.SRCALPHA)
             if icon_name:
                 for src in [visualizer.OBJECTS_IMG, visualizer.TERRAINS_IMG, visualizer.SOUPS_IMG, visualizer.CHEFS_IMG]:
