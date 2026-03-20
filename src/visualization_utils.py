@@ -179,7 +179,7 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
     window.blit(temp_surf, (bubble_x, bubble_y))
 
 def render_game(window, visualizer, env, step, target_score, reward, num_AI, visual_level, layout_dict,
-                thought_msg=None, show_intention=True):
+                thought_msg=None, show_intention=True, pid=1, trial=8, condition='A-8'):
     if not window or not visualizer:
         return
 
@@ -198,7 +198,16 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
     screen_width, screen_height = window.get_size()
     font_name = "arial"
     font_header = pygame.font.SysFont(font_name, 30, bold=True)
-    info_text = font_header.render(f"Step: {step} | Reward: {reward} / {target_score}", True, (0, 0, 0))
+    info_str = f"Step: {step} | Reward: {reward} / {target_score}"
+
+    if pid is not None:
+        info_str += f" | PID: {pid}"
+    if trial is not None:
+        info_str += f" | Trial: {trial}"
+    if condition is not None:
+        info_str += f" | Cond: {condition}"
+
+    info_text = font_header.render(info_str, True, (0, 0, 0))
     window.blit(info_text, (10, 10))
 
     # 3. Map Rendering with Scale 1.3

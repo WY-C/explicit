@@ -146,8 +146,9 @@ if __name__ == '__main__':
         # main.py가 반환하는 실제 플레이 시간(duration)을 언패킹
         score, step, col, duration = run_overcooked_game({
             'layout': session['layout_name'], 'visual_level': cond['vis'], 'show_intention': cond['show_intention'],
-            'async': cond['async'], 'log_dir': f"experiments/PID_{pid}/logs", 'name': cond['name'], 'episode': 1, 'horizon': 400,
-            'p0': 'Human', 'p1': 'EIRAAsync', 'cook_time': 20, 'timestep': 400, 'gpt_model': 'Qwen/Qwen3-VL-8B-Instruct', 'prompt_level': 'l3-aip'
+            'async': cond['async'], 'log_dir': f"experiments/PID_{pid}/logs", 'name': cond['name'], 'episode': 1, 'horizon': 800,
+            'p0': 'Human', 'p1': 'EIRAAsync', 'cook_time': 20, 'timestep': 400, 'gpt_model': 'Qwen/Qwen3-VL-8B-Instruct', 'prompt_level': 'l3-aip',
+            'pid': pid, 'trial': i+1, 'condition': f"{session['map']} - {session['cond_id']}"
         }, surface=screen)
         
         # 받아온 duration을 CSV에 기록

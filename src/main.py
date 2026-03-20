@@ -91,11 +91,23 @@ def reset_agent_internals(agent):
             agent.reset()
         except:
             pass
+def render_loading_screen(surface, message, dot_count):
+    surface.fill((40, 44, 52)) # 깔끔한 다크 테마 배경
+    font = pygame.font.SysFont("arial", 40, bold=True)
+    dots = "." * dot_count
+    text_surf = font.render(f"{message}{dots}", True, (255, 255, 255))
+    text_rect = text_surf.get_rect(center=(surface.get_width()//2, surface.get_height()//2 - 20))
+    surface.blit(text_surf, text_rect)
 
+    sub_font = pygame.font.SysFont("arial", 24)
+    sub_surf = sub_font.render("Loading LLM weights and Environment... Please wait.", True, (171, 178, 191))
+    sub_rect = sub_surf.get_rect(center=(surface.get_width()//2, surface.get_height()//2 + 30))
+    surface.blit(sub_surf, sub_rect)
+    pygame.display.flip()
 def get_parser():
     p = ArgumentParser()
     p.add_argument('--layout', type=str, default='simple'); p.add_argument('--p0', default='Human'); p.add_argument('--p1', default='EIRAAsync')
-    p.add_argument('--horizon', type=int, default=40); p.add_argument('--episode', type=int, default=1)
+    p.add_argument('--horizon', type=int, default=400); p.add_argument('--episode', type=int, default=1)
     p.add_argument('--render', type=boolean_argument, default=True); p.add_argument('--visual_level', type=int, default=2)
     p.add_argument('--async', dest='async', type=boolean_argument, default=True)
     p.add_argument('--timestep', type=int, default=400); p.add_argument('--log_dir', default=None); p.add_argument('--name', default='unknown')
@@ -105,6 +117,7 @@ def get_parser():
     return p
 
 def main(variant, surface=None):
+    pygame.init()
     layout_name = variant.get('layout', 'cramped_room')
     horizon = variant.get('horizon', 400); render = variant.get('render', True)
     visual_level = variant.get('visual_level', 2); async_mode = variant.get('async', True)
@@ -117,26 +130,58 @@ def main(variant, surface=None):
     visualizer = StateVisualizer(cook_time=variant.get('cook_time', 20))
 
     agents_list = []
-    for i, alg in enumerate([variant.get('p0', 'Human'), variant.get('p1', 'EIRAAsync')]):
-        if alg == "Human": 
-            agent = HumanAgent()
-        else:
-            cache_key = (layout_name, alg, variant.get('gpt_model'))
-            if cache_key in GLOBAL_AGENT_CACHE:
-                print(f"[*] Reusing and Resetting cached agent: {layout_name}-{alg}")
-                agent = GLOBAL_AGENT_CACHE[cache_key]
-                # 💡 재사용 전에 내부 상태를 박박 닦아서 초기화
-                reset_agent_internals(agent)
+    loading_complete = False
+    
+    def load_agents_task():
+        nonlocal agents_list, loading_complete
+        for i, alg in enumerate([variant.get('p0', 'Human'), variant.get('p1', 'EIRAAsync')]):
+            if alg == "Human": 
+                agent = HumanAgent()
             else:
-                print(f"[*] Creating new agent: {layout_name}-{alg}")
-                agent = make_agent(alg, mdp, layout_name, 
-                                   model=variant.get('gpt_model', 'Qwen/Qwen3-VL-8B-Instruct'), 
-                                   prompt_level=variant.get('prompt_level', 'l3-aip'))
-                GLOBAL_AGENT_CACHE[cache_key] = agent
+                cache_key = (layout_name, alg, variant.get('gpt_model'))
+                if cache_key in GLOBAL_AGENT_CACHE:
+                    print(f"[*] Reusing and Resetting cached agent: {layout_name}-{alg}")
+                    agent = GLOBAL_AGENT_CACHE[cache_key]
+                    reset_agent_internals(agent)
+                else:
+                    print(f"[*] Creating new agent: {layout_name}-{alg}")
+                    agent = make_agent(alg, mdp, layout_name, 
+                                       model=variant.get('gpt_model', 'Qwen/Qwen3-VL-8B-Instruct'), 
+                                       prompt_level=variant.get('prompt_level', 'l3-aip'))
+                    GLOBAL_AGENT_CACHE[cache_key] = agent
+            
+            agent.set_agent_index(i)
+            agent.async_mode = async_mode
+            agents_list.append(agent)
+        loading_complete = True
+
+    if render:
+        loader_thread = threading.Thread(target=load_agents_task)
+        loader_thread.start()
         
-        agent.set_agent_index(i)
-        agent.async_mode = async_mode
-        agents_list.append(agent)
+        dot_timer = 0
+        dots = 0
+        # 로딩이 끝날 때까지 이벤트 펌핑하며 애니메이션 재생
+        while not loading_complete:
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT: 
+                    pygame.quit()
+                    sys.exit()
+            
+            if time.time() - dot_timer > 0.5:
+                dots = (dots + 1) % 4
+                dot_timer = time.time()
+            
+            render_loading_screen(window_surface, "Initializing AI Models", dots)
+            pygame.time.delay(50)
+            
+        loader_thread.join()
+        pygame.display.set_caption("EIRA Agent - Overcooked AI") # 로딩 끝나면 제목 변경
+    else:
+        # 렌더링을 안 할 때는 그냥 일반 동기 로딩
+        load_agents_task()
+
+    # ==========================================
     
     ai_idx = 1
     for i, a in enumerate(agents_list):
@@ -182,7 +227,7 @@ def main(variant, surface=None):
                 th.join()
 
             _, msg = get_combined_thought(agents_list)
-            vu.render_game(window_surface, visualizer, env, 0, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True))
+            vu.render_game(window_surface, visualizer, env, 0, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True), pid=variant.get('pid'), trial=variant.get('trial'), condition=variant.get('condition'))
             
             guide_font = pygame.font.SysFont("arial", 24, bold=True)
             guide_surf = guide_font.render("Press arrow keys or SPACE to start.", True, (255, 50, 50))
@@ -220,7 +265,7 @@ def main(variant, surface=None):
                         pygame.time.delay(1)
             else:
                 _, msg = get_combined_thought(agents_list)
-                vu.render_game(window_surface, visualizer, env, t, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True))
+                vu.render_game(window_surface, visualizer, env, t, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True), pid=variant.get('pid'), trial=variant.get('trial'), condition=variant.get('condition'))
                 while not chosen:
                     for ev in pygame.event.get():
                         if ev.type == pygame.QUIT: pygame.quit(); return 0,0,0,0
@@ -266,7 +311,7 @@ def main(variant, surface=None):
                 "inter_collision": is_col, "reward": reward, "cumulative_reward": r_total
             })
             
-            if render and async_mode: vu.render_game(window_surface, visualizer, env, t, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True))
+            if render and async_mode: vu.render_game(window_surface, visualizer, env, t, target_score, r_total, ai_idx, visual_level, layout_dict, msg, variant.get('show_intention', True), pid=variant.get('pid'), trial=variant.get('trial'), condition=variant.get('condition'))
             if done: final_t = t; break
             
         ep_duration = time.time() - actual_start_time

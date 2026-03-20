@@ -50,10 +50,12 @@ class ProAgent(object):
     def openai_api_key(self):
         if self.key_rotation:
             self.update_openai_key()
-        return self.openai_api_keys[0]
+        return 'EMPTY'
 
     def update_openai_key(self):
-        self.openai_api_keys.append(self.openai_api_keys.pop(0))
+        # 💡 키가 2개 이상일 때만 로테이션을 돌리도록 안전장치 추가
+        if self.openai_api_keys and len(self.openai_api_keys) > 1:
+            self.openai_api_keys.append(self.openai_api_keys.pop(0))
 
     def set_agent_index(self, agent_index):
         raise NotImplementedError
@@ -141,7 +143,7 @@ class ProMediumLevelAgent(ProAgent):
         # [NEW] 타임아웃/재요청 관리 변수
         self.thinking_start_time = 0.0  # 생각 시작 시간
         self.thinking_request_id = 0    # 요청 고유 ID (오래된 요청 무시용)
-        self.TIMEOUT_SECONDS = 4.0      # 3초 타임아웃 설정
+        self.TIMEOUT_SECONDS = 3.0      # 3초 타임아웃 설정
 
         self.is_llm_called_this_step = False
         self.last_llm_response_time = 0.0
@@ -646,57 +648,97 @@ class ProMediumLevelAgent(ProAgent):
         return chosen_action
 
 
-    def parse_ml_action(self, response, agent_index): 
-        if agent_index == 0: 
-            pattern = r'layer\s*0: (.+)'
-        elif agent_index == 1: 
-            pattern = r'layer\s*1: (.+)'
+    def parse_ml_action(self, response, agent_index):
+        import re
+
+        # ---------------------------
+        # 0. 다양한 포맷 대응 (따옴표, 띄어쓰기 변형 완벽 방어)
+        # ---------------------------
+        patterns = []
+
+        if agent_index == 0:
+            patterns = [
+                r'layer\s*0:\s*([^\n]+)',
+                r'(?:Intention|Plan|Action).*?Player\s*0\s*:\s*([^\n]+)',
+                r'Player\s*0\s*:\s*([^\n]+)'
+            ]
+        elif agent_index == 1:
+            patterns = [
+                r'layer\s*1:\s*([^\n]+)',
+                r'(?:Intention|Plan|Action).*?Player\s*1\s*:\s*([^\n]+)',
+                r'Player\s*1\s*:\s*([^\n]+)'
+            ]
         else:
             raise ValueError("Unsupported agent index.")
 
-        match = re.search(pattern, response)
-        action_string = match.group(1).strip() if match else response.strip()
+        action_string = None
+        for pattern in patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                action_string = match.group(1).strip(' \n\r\t"\'')
+                break
 
-        # 1. Wait 커맨드 먼저 처리 (시간 조정 로직 등을 위해)
-        if "wait" in action_string:
+        # fallback
+        if not action_string:
+            action_string = response.strip()
+
+        # ---------------------------
+        # 1. wait 처리
+        # ---------------------------
+        if "wait" in action_string.lower():
             def parse_wait_string(s):
-                if s == "wait": return 1
-                # 숫자만 추출
-                nums = re.findall(r'\d+', s)
-                if nums: return int(nums[0])
-                return 1
-            
-            # forced_coordination 맵일 경우 최소 3초 대기
+                w_match = re.search(r'wait[^\d]*(\d+)', s.lower())
+                return int(w_match.group(1)) if w_match else 1
+
             wait_time = parse_wait_string(action_string)
-            if self.layout == 'forced_coordination': 
+            wait_time = max(1, wait_time)
+
+            if self.layout == 'forced_coordination':
                 wait_time = max(3, wait_time)
-            
+
             return f"wait({wait_time})"
 
-        # 2. 인덱스가 포함된 함수 호출형 액션 (pickup_onion(0)) 즉시 반환
-        # wait는 위에서 처리했으므로 제외됨
-        if re.search(r'\w+\(\d+\)', action_string):
-            if "," in action_string:
-                action_string = action_string.split(',')[0].strip()
-            return action_string
+        # ---------------------------
+        # 2. 함수형 액션 (pickup_onion(0))
+        # ---------------------------
+        # 환경이 인덱스를 완벽히 지원하므로 원본 텍스트 그대로 추출하여 반환
+        func_match = re.search(r'(\w+\(\d+\))', action_string)
+        if func_match:
+            return func_match.group(1)
 
-        # 3. 레거시(구형) 텍스트 처리 (LLM이 인덱스 없이 말했을 경우 대비)
-        ml_action = action_string.split()[0] # 기본 단어 추출
+        # ---------------------------
+        # 3. 레거시 텍스트 처리
+        # ---------------------------
+        action_string_lower = action_string.lower()
 
-        if "place_obj" in action_string: ml_action = "place_obj_on_counter"
-        elif "deliver" in action_string: ml_action = "deliver_soup"
-        elif "pick" in action_string:
-            if "onion" in action_string: ml_action = "pickup_onion" # (0)이 없으면 자동 할당됨(find_motion_goals에서)
-            elif "tomato" in action_string: ml_action = "pickup_tomato"
-            elif "dish" in action_string: ml_action = "pickup_dish"
-        elif "put" in action_string:
-            if "onion" in action_string: ml_action = "put_onion_in_pot"
-            elif "tomato" in action_string: ml_action = "put_tomato_in_pot"
-        elif "fill" in action_string:   
-            ml_action = "fill_dish_with_soup"
-        
-        return ml_action
+        if "place_obj" in action_string_lower:
+            return "place_obj_on_counter"
 
+        if "deliver" in action_string_lower:
+            return "deliver_soup"
+
+        if "pick" in action_string_lower:
+            if "onion" in action_string_lower:
+                return "pickup_onion"
+            elif "tomato" in action_string_lower:
+                return "pickup_tomato"
+            elif "dish" in action_string_lower:
+                return "pickup_dish"
+
+        if "put" in action_string_lower:
+            if "onion" in action_string_lower:
+                return "put_onion_in_pot"
+            elif "tomato" in action_string_lower:
+                return "put_tomato_in_pot"
+
+        if "fill" in action_string_lower:
+            return "fill_dish_with_soup"
+
+        # ---------------------------
+        # 4. 최종 fallback
+        # ---------------------------
+        return action_string.split()
+   
     def generate_ml_action(self, state):
             """
             [Modified] 전체 실행 시간을 측정하여 필요한 스텝 수(Total Time / 400ms 올림)를 계산합니다.
