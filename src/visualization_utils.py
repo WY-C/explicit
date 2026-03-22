@@ -500,3 +500,5 @@ def render_game(window, visualizer, env, step, target_score, reward, num_AI, vis
              print(f"Error in Level 2 rendering: {e}")
 
     pygame.display.flip()
+
+    

@@ -1,7 +1,7 @@
 {
     "grid":  """XXXXPXXXX
     		O       D
-    		X      2X
+    		O      2D
     		X   1   X
     		XXXXSXXXX""",
     "start_order_list": None,

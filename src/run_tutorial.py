@@ -138,7 +138,7 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
         'layout': layout, 'async': is_async, 'visual_level': visual_level, 'name': cond_name, 
         'log_dir': f"experiments/PID_{pid}/logs", 'episode': 1, 'horizon': 400, 
         'p0': 'Human', 'p1': 'EIRAAsync', 'show_intention': True, 'render': True,
-        'guide_text': guide_text
+        'guide_text': guide_text, 'timestep': 200
     }, surface=screen)
     
     print("[DEBUG] Main game loop finished successfully. Logging summary...")
@@ -179,8 +179,10 @@ if __name__ == "__main__":
     for i, (m, a, v, title, desc, ln) in enumerate(active_steps):
         run_tutorial_step(pid, m, a, v, "cramped_room", title, desc, ln, i+1, screen)
     
-    if exp_type in ['sync', 'async']:
+    if exp_type in ['sync']:
         run_main_step(pid, "cramped_room", False, 0, "Phase1_Baseline", "Baseline Measurement", "Collaborate without any AI info", screen)
+    if exp_type in ['async']:
+        run_main_step(pid, "cramped_room", True, 0, "Phase1_Baseline", "Baseline Measurement", "Collaborate without any AI info", screen)
     
     pygame.quit()
     print("[DEBUG] Script cleanly exited.")

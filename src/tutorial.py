@@ -82,7 +82,6 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
         
         try:
             _, reward, _, _ = env.step((human_action, ai_action))
-            if reward > 0: served += 1
         
         except ValueError as e:
             print(f"[Tutorial Env Error] Step failed: {e}. Attempting recovery with STAY.")
@@ -174,3 +173,6 @@ def render_tutorial_game(window, visualizer, env, step, served_count, visual_lev
 
     # 모든 요소를 온전히 다 그린 후, 여기서 최종적으로 단 한 번만 화면 업데이트!
     pygame.display.flip()
+
+
+    

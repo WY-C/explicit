@@ -119,10 +119,13 @@ def get_parser():
 def main(variant, surface=None):
     pygame.init()
     layout_name = variant.get('layout', 'cramped_room')
-    horizon = variant.get('horizon', 400); render = variant.get('render', True)
-    visual_level = variant.get('visual_level', 2); async_mode = variant.get('async', True)
-    game_timestep = variant.get('timestep', 400); target_score = TARGET_SCORES.get(layout_name, 60)
-    
+    horizon = variant.get('horizon', 400)
+    render = variant.get('render', True)
+    visual_level = variant.get('visual_level', 2)
+    async_mode = variant.get('async', True)
+    game_timestep = variant.get('timestep', 400)
+    target_score = TARGET_SCORES.get(layout_name, 60)
+
     mdp = get_mdp(layout_name); layout_dict = vu.generate_layout_dict(mdp)
     env = OvercookedEnv(mdp, horizon=horizon); window_surface = surface
     
