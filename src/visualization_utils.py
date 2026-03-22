@@ -179,7 +179,7 @@ def draw_speech_bubble(window, content_surf, target_x, target_y, is_thought=Fals
     window.blit(temp_surf, (bubble_x, bubble_y))
 
 def render_game(window, visualizer, env, step, target_score, reward, num_AI, visual_level, layout_dict,
-                thought_msg=None, show_intention=True, pid=1, trial=8, condition='A-8'):
+                thought_msg=None, show_intention=True, pid="tutorial", trial="tutorial", condition='tutorial'):
     if not window or not visualizer:
         return
 

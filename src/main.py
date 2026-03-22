@@ -282,7 +282,8 @@ def main(variant, surface=None):
             action_threads = []
             def fetch_action(index, agent):
                 if isinstance(agent, HumanAgent): 
-                    agent.set_next_action(human_act); actions[index] = agent.action(env.state)
+                    agent.set_next_action(human_act)
+                    actions[index] = agent.action(env.state)
                 else: actions[index] = agent.action(env.state, partner_action=human_act)
 
             for idx, a in enumerate(agents_list):
@@ -303,7 +304,14 @@ def main(variant, surface=None):
                      (actions[1] in Direction.ALL_DIRECTIONS and int_p1 == old_p0 and actions[0] not in Direction.ALL_DIRECTIONS)
             if is_col: inter_col_count += 1
 
-            _, reward, is_tout, _ = env.step(tuple(actions)); r_total += reward
+            try:
+                _, reward, is_tout, _= env.step(actions)
+            except ValueError as e:
+                print(f"[Tutorial Env Error] Step failed: {e}. Attempting recovery with STAY.")
+                _, reward, is_tout, _ = env.step((actions[0], Action.STAY))
+                agents_list[1].generate_ml_action(env.state)
+            
+            r_total += reward
             done = is_tout or (r_total >= target_score); _, msg = get_combined_thought(agents_list)
             
             logger.log_step({

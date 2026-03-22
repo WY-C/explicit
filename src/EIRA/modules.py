@@ -27,7 +27,7 @@ class Module(object):
                  model="Qwen/Qwen3-VL-8B-Instruct",
                  retrival_method="recent_k",
                  K=3,
-                 api_base="http://192.168.0.19:8000/v1", # [추가] 기본값 설정
+                 api_base="http://localhost:8000/v1", # [추가] 기본값 설정
                  api_key=None):                        # [추가]
         '''
         args:  

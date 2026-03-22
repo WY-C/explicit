@@ -78,15 +78,11 @@ def run_tutorial_step(pid, multi, is_async, visual_level, layout, title, descrip
     if multi:
         cache_key = "tutorial_grid_EIRAAsync"
         
-        # 안전한 메모리 캐시만 사용 (파일 캐싱 제거)
-        if cache_key in _cached_agents:
-            print("[DEBUG] Loaded AI Agent from memory cache (Instant load).")
-            ai = _cached_agents[cache_key]
-        else:
-            print("[DEBUG] Initializing AI Agent for the first time... This will take a while! Please wait.")
-            ai = make_agent('EIRAAsync', mdp, "tutorial_grid", K=1)
-            _cached_agents[cache_key] = ai
-            print("[DEBUG] make_agent finished successfully.")
+       
+        print("[DEBUG] Initializing AI Agent for the first time... This will take a while! Please wait.")
+        ai = make_agent('EIRAAsync', mdp, "tutorial_grid", K=1)
+        _cached_agents[cache_key] = ai
+        print("[DEBUG] make_agent finished successfully.")
         
         # 이전 스텝에서 사용했던 에이전트의 상태를 리셋
         ai.set_agent_index(1)
@@ -138,7 +134,7 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
     print("[DEBUG] Entering run_overcooked_game loop...")
     start_t = time.time()
     
-    score, step, col = run_overcooked_game({
+    score, step, col, dur = run_overcooked_game({
         'layout': layout, 'async': is_async, 'visual_level': visual_level, 'name': cond_name, 
         'log_dir': f"experiments/PID_{pid}/logs", 'episode': 1, 'horizon': 400, 
         'p0': 'Human', 'p1': 'EIRAAsync', 'show_intention': True, 'render': True,
@@ -146,7 +142,7 @@ def run_main_step(pid, layout, is_async, visual_level, cond_name, title, descrip
     }, surface=screen)
     
     print("[DEBUG] Main game loop finished successfully. Logging summary...")
-    log_summary_score(pid, 0, ("Phase1", layout), -1 if "Baseline" in cond_name else -2, cond_name, score, step, col, time.time() - start_t)
+    log_summary_score(pid, 0, "baseline", "0", cond_name, score, step, col, dur)
     print(f"--- [DEBUG] Main Step Complete ---\n")
 
 if __name__ == "__main__":
@@ -181,7 +177,7 @@ if __name__ == "__main__":
     print(f"[DEBUG] Started script with PID: {pid}, Type: {exp_type}")
     
     for i, (m, a, v, title, desc, ln) in enumerate(active_steps):
-        run_tutorial_step(pid, m, a, v, "tutorial_grid", title, desc, ln, i+1, screen)
+        run_tutorial_step(pid, m, a, v, "cramped_room", title, desc, ln, i+1, screen)
     
     if exp_type in ['sync', 'async']:
         run_main_step(pid, "cramped_room", False, 0, "Phase1_Baseline", "Baseline Measurement", "Collaborate without any AI info", screen)

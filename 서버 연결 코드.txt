@@ -1,0 +1,37 @@
+python -m vllm.entrypoints.openai.api_server   --model Qwen/Qwen3-VL-8B-Instruct   --dtype bfloat16   --tensor-parallel-size 2   --gpu-memory-utilization 0.8   --max-model-len 16398   --enable-prefix-caching   --port 8000
+
+
+ssh -L 8000:192.168.0.19:8000 noward
+
+conda activate EIRA
+cd Desktop/explicit/src
+
+python study.py --pid 601 --study_type sync
+python study.py --pid 601 --study_type async
+
+python run_tutorial.py --pid 601 --type single
+python run_tutorial.py --pid 601 --type sync
+python run_tutorial.py --pid 601 --type async
+
+//켜놔야 하는 것들
+각 튜토리얼
+map_offset = 0 if env_type == 'async' else 3
+    map_index = (pid - 1 + map_offset) % 6
+async 기본임.
+C 찾아야 함.
+pid 1의 경우, 1, 3
+pid 2의 경우, 2, 2
+pid 3의 경우, 3, 1
+pid 4의 경우, 3, 1
+pid 5의 경우, 2, 2
+pid 6의 경우, 1, 3
+
+pid 7부터 다시 반복
+BALANCED_MAP_ORDERS_6 = [
+    [0, 1, 2], # 0: A -> B -> C
+    [1, 2, 0], # 1: B -> C -> A
+    [2, 0, 1], # 2: C -> A -> B
+    [2, 1, 0], # 3: C -> B -> A (0번의 역순)
+    [0, 2, 1], # 4: A -> C -> B (1번의 역순)
+    [1, 0, 2]  # 5: B -> A -> C (2번의 역순)
+]

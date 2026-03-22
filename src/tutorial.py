@@ -79,8 +79,16 @@ def run_tutorial(env, screen, visualizer, ai_agent=None, args=None):
                  (human_action in Direction.ALL_DIRECTIONS and int_p0 == old_p1 and ai_action not in Direction.ALL_DIRECTIONS) or \
                  (ai_action in Direction.ALL_DIRECTIONS and int_p1 == old_p0 and human_action not in Direction.ALL_DIRECTIONS)
         if is_col: col_total += 1
-
-        _, reward, _, _ = env.step((human_action, ai_action))
+        
+        try:
+            _, reward, _, _ = env.step((human_action, ai_action))
+            if reward > 0: served += 1
+        
+        except ValueError as e:
+            print(f"[Tutorial Env Error] Step failed: {e}. Attempting recovery with STAY.")
+            _, reward, _, _ = env.step((human_action, Action.STAY))
+            ai_agent.generate_ml_action(env.state)
+        
         if reward > 0: served += 1
         step += 1
         logger.log_step({
